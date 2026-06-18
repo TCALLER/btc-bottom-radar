@@ -92,6 +92,13 @@ python -m collector.ladder --simulate --score 62 --send-test          # also sen
 Simulation is **side-effect-free**: it builds a synthetic row from the latest real row + overrides,
 recomputes tiers from config, prints a table, and never touches `btc.ladder_state`.
 
+## Database schema
+
+`db/schema.sql` is the canonical, idempotent source-of-truth for the `btc` schema (tables, RLS,
+grants, and the `btc.latest` view). The view is declared `WITH (security_invoker = true)` so it
+runs with the caller's RLS rather than the owner's (no SECURITY DEFINER bypass). Because the view
+uses `select *`, **always recreate it from this file after adding any column** to `btc.indicators`.
+
 ## Notes & stubs
 
 - The Telegram bot token currently configured resolves to **@flowgenius_bot** (it reaches the target
