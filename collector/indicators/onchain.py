@@ -36,9 +36,12 @@ _SANITY = {
     "mvrv_zscore": (-1.0, 6.0),
     "sopr": (0.8, 1.3),
     "supply_profit_pct": (30.0, 100.0),
+    "nupl": (-1.0, 1.0),
+    "puell_multiple": (0.0, 15.0),
 }
 
-_EMPTY = {"mvrv_zscore": None, "sopr": None, "supply_profit_pct": None}
+_EMPTY = {"mvrv_zscore": None, "sopr": None, "supply_profit_pct": None,
+          "nupl": None, "puell_multiple": None}
 
 
 def _get_json(url: str, params: dict | None = None):
@@ -105,10 +108,20 @@ class OnchainProvider:
             else:
                 log.warning("circulating supply unavailable — cannot derive supply_profit_pct")
 
+        # Top-radar on-chain series (optional; same graceful degradation).
+        nupl = _get_json(f"{_BASE}/nupl/last")
+        if isinstance(nupl, dict) and nupl.get("nupl") is not None:
+            out["nupl"] = _to_float(nupl["nupl"])
+
+        puell = _get_json(f"{_BASE}/puell-multiple/last")
+        if isinstance(puell, dict) and puell.get("puellMultiple") is not None:
+            out["puell_multiple"] = _to_float(puell["puellMultiple"])
+
         for k, v in out.items():
             _sanity_check(k, v)
-        log.info("on-chain (bitcoin_data): mvrv=%s sopr=%s supply_profit_pct=%s",
-                 out["mvrv_zscore"], out["sopr"], out["supply_profit_pct"])
+        log.info("on-chain (bitcoin_data): mvrv=%s sopr=%s supply_profit_pct=%s nupl=%s puell=%s",
+                 out["mvrv_zscore"], out["sopr"], out["supply_profit_pct"],
+                 out["nupl"], out["puell_multiple"])
         return out
 
     # -------------------------------------------------------------- glassnode

@@ -1,13 +1,17 @@
 interface Props {
   score: number;
   tier: string;
+  title?: string;
 }
 
+// Covers both the bottom tiers and the symmetric top tiers.
 const TIER_COLORS: Record<string, string> = {
   neutraal: "#9ca3af",
   watch: "#eab308",
   naderend: "#f97316",
   sterke_bodem_confluentie: "#ef4444",
+  verhit: "#f97316",
+  sterke_top_confluentie: "#ef4444",
 };
 
 const TIER_LABELS: Record<string, string> = {
@@ -15,9 +19,11 @@ const TIER_LABELS: Record<string, string> = {
   watch: "Waakzaam",
   naderend: "Naderend",
   sterke_bodem_confluentie: "Sterke bodem-confluentie",
+  verhit: "Verhit",
+  sterke_top_confluentie: "Sterke top-confluentie",
 };
 
-export default function Gauge({ score, tier }: Props) {
+export default function Gauge({ score, tier, title }: Props) {
   const color = TIER_COLORS[tier] ?? "#9ca3af";
   const radius = 80;
   const circumference = Math.PI * radius; // semicircle
@@ -26,6 +32,7 @@ export default function Gauge({ score, tier }: Props) {
 
   return (
     <div className="flex flex-col items-center">
+      {title && <div className="text-sm font-semibold text-gray-300 mb-1">{title}</div>}
       <svg width="220" height="130" viewBox="0 0 220 130">
         <path
           d="M 20 120 A 90 90 0 0 1 200 120"

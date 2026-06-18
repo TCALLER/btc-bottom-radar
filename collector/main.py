@@ -13,6 +13,8 @@ import datetime as dt
 import os
 
 from . import scoring
+from . import top_radar
+from . import ladder as ladder_engine
 from .config import env, load_thresholds, setup_logging
 from .datasources import (
     fetch_daily_closes,
@@ -77,10 +79,12 @@ def build_context(cfg: dict) -> tuple[Context, dict]:
     return ctx, raw
 
 
-def build_row(ctx: Context, results: list, score: dict, raw: dict) -> dict:
-    """Assemble the btc.indicators row from indicator results + score."""
+def build_row(ctx: Context, results: list, score: dict, raw: dict,
+              top_results: list, top_score: dict) -> dict:
+    """Assemble the btc.indicators row from indicator results + bottom + top score."""
     today = dt.datetime.now(dt.timezone.utc).date().isoformat()
     by_key = {r.key: r for r in results}
+    top_by_key = {r.key: r for r in top_results}
 
     def val(key):
         r = by_key.get(key)
@@ -90,7 +94,11 @@ def build_row(ctx: Context, results: list, score: dict, raw: dict) -> dict:
         r = by_key.get(key)
         return (r.detail.get(field) if r else None)
 
-    return {
+    def top_detail(key, field):
+        r = top_by_key.get(key)
+        return (r.detail.get(field) if r else None)
+
+    row = {
         "captured_date": today,
         "price_usd": ctx.price_usd,
         "all_time_high_usd": ctx.ath_usd,
@@ -112,6 +120,16 @@ def build_row(ctx: Context, results: list, score: dict, raw: dict) -> dict:
         "bottom_score": score["bottom_score"],
         "tier": score["tier"],
         "signals_triggered": score["signals_triggered"],
+        # top-radar columns
+        "rsi_14w": ctx.rsi_14_weekly,
+        "pi_cycle_top": bool(top_by_key["pi_cycle_top"].triggered)
+        if "pi_cycle_top" in top_by_key else None,
+        "nupl": ctx.onchain.get("nupl"),
+        "puell_multiple": ctx.onchain.get("puell_multiple"),
+        "top_score": top_score["top_score"],
+        "top_tier": top_score["top_tier"],
+        "top_signals_triggered": top_score["top_signals_triggered"],
+        # combined detail for the dashboard table (bottom + top indicators)
         "indicators_detail": {
             r.key: {
                 "value": r.value,
@@ -120,10 +138,11 @@ def build_row(ctx: Context, results: list, score: dict, raw: dict) -> dict:
                 "available": r.available,
                 "detail": r.detail,
             }
-            for r in results
+            for r in (results + top_results)
         },
         "raw": raw,
     }
+    return row
 
 
 def run(send_digest: bool) -> int:
@@ -138,12 +157,19 @@ def run(send_digest: bool) -> int:
     results = [mod.compute(ctx) for mod in INDICATORS]
     score = scoring.compute_score(results, cfg)
     score["tier_emoji"] = cfg["score_tiers"][score["tier"]]["emoji"]
-    row = build_row(ctx, results, score, raw)
+
+    # Top / sell radar (symmetric) — reuses the same fetched data.
+    top_results = top_radar.compute_top_results(ctx)
+    top_score = scoring.compute_top_score(top_results, cfg)
+
+    row = build_row(ctx, results, score, raw, top_results, top_score)
 
     log.info(
-        "score=%s tier=%s triggered=%s/%s price=%s",
+        "bottom=%s/%s top=%s/%s | bottom_score=%s tier=%s top_score=%s top_tier=%s price=%s",
+        score["triggered_count"], score["available_count"],
+        top_score["triggered_count"], top_score["available_count"],
         score["bottom_score"], score["tier"],
-        score["triggered_count"], score["available_count"], ctx.price_usd,
+        top_score["top_score"], top_score["top_tier"], ctx.price_usd,
     )
 
     client = db.get_client()
@@ -153,11 +179,14 @@ def run(send_digest: bool) -> int:
     previous = db.fetch_last_snapshot(client)
     saved = db.upsert_indicators(client, row)
 
-    # enrich today's dict with emoji for message formatting
+    # enrich today's dict with emoji + counts for message formatting
     today_view = dict(row)
     today_view["tier_emoji"] = score["tier_emoji"]
     today_view["available_count"] = score["available_count"]
     today_view["triggered_count"] = score["triggered_count"]
+    today_view["top_tier_emoji"] = cfg["top_score_tiers"][top_score["top_tier"]]["emoji"]
+    today_view["top_available_count"] = top_score["available_count"]
+    today_view["top_triggered_count"] = top_score["triggered_count"]
 
     if telegram_ok:
         events = tg.detect_changes(today_view, previous, cfg)
@@ -165,25 +194,39 @@ def run(send_digest: bool) -> int:
             msg = tg.format_alert(events, today_view)
             if tg.send_message(msg):
                 db.insert_alert(client, {
-                    "alert_type": "change",
-                    "tier": score["tier"],
-                    "bottom_score": score["bottom_score"],
-                    "message": msg,
-                    "payload": {"events": events},
-                    "delivered": True,
+                    "alert_type": "change", "tier": score["tier"],
+                    "bottom_score": score["bottom_score"], "message": msg,
+                    "payload": {"events": events}, "delivered": True,
+                })
+
+        # Top-radar alert on tier change / new strong top signal.
+        top_events = tg.detect_top_changes(today_view, previous)
+        if top_events:
+            tmsg = tg.format_top_alert(top_events, today_view)
+            if tg.send_message(tmsg):
+                db.insert_alert(client, {
+                    "alert_type": "top_change", "tier": top_score["top_tier"],
+                    "bottom_score": top_score["top_score"], "message": tmsg,
+                    "payload": {"events": top_events}, "delivered": True,
                 })
 
         if send_digest:
             digest = tg.format_digest(today_view, results, cfg)
+            digest = tg.append_top_to_digest(digest, today_view, top_results, cfg)
             delivered = tg.send_message(digest)
             db.insert_alert(client, {
-                "alert_type": "digest",
-                "tier": score["tier"],
-                "bottom_score": score["bottom_score"],
-                "message": digest,
-                "payload": {"signals_triggered": score["signals_triggered"]},
+                "alert_type": "digest", "tier": score["tier"],
+                "bottom_score": score["bottom_score"], "message": digest,
+                "payload": {"signals_triggered": score["signals_triggered"],
+                            "top_signals_triggered": top_score["top_signals_triggered"]},
                 "delivered": delivered,
             })
+
+    # Buy-ladder: evaluate AFTER the row is persisted (notify-only, idempotent).
+    try:
+        ladder_engine.evaluate(row, client=client)
+    except Exception as exc:  # noqa: BLE001 - ladder must never break the daily run
+        log.error("ladder evaluation failed (non-fatal): %s", exc)
 
     log.info("done. row id=%s date=%s", saved.get("id"), saved.get("captured_date"))
     return 0

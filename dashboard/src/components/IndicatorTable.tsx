@@ -1,6 +1,7 @@
 import type { IndicatorRow } from "../types";
 
 const LABELS_NL: Record<string, string> = {
+  // bottom radar
   pi_cycle_bottom: "Pi-Cycle Bodem",
   ma_200w: "200-weken MA",
   mayer_multiple: "Mayer Multiple",
@@ -10,19 +11,24 @@ const LABELS_NL: Record<string, string> = {
   mvrv_zscore: "MVRV Z-Score",
   sopr: "SOPR",
   supply_profit_pct: "Supply in winst %",
+  // top radar
+  pi_cycle_top: "Pi-Cycle Top",
+  mvrv_zscore_high: "MVRV Z-Score (hoog)",
+  mayer_high: "Mayer Multiple (hoog)",
+  rsi_14w_high: "RSI (weekly, hoog)",
+  fear_greed_high: "Fear & Greed (hebzucht)",
+  nupl: "NUPL",
+  puell_multiple: "Puell Multiple",
 };
 
-// Display order matches the collector.
-const ORDER = [
-  "pi_cycle_bottom",
-  "ma_200w",
-  "mayer_multiple",
-  "rsi_14d",
-  "drawdown_from_ath_pct",
-  "fear_greed",
-  "mvrv_zscore",
-  "sopr",
-  "supply_profit_pct",
+export const BOTTOM_KEYS = [
+  "pi_cycle_bottom", "ma_200w", "mayer_multiple", "rsi_14d",
+  "drawdown_from_ath_pct", "fear_greed", "mvrv_zscore", "sopr", "supply_profit_pct",
+];
+
+export const TOP_KEYS = [
+  "pi_cycle_top", "mvrv_zscore_high", "mayer_high", "rsi_14w_high",
+  "fear_greed_high", "nupl", "puell_multiple",
 ];
 
 function fmtValue(key: string, v: number | boolean | null): string {
@@ -35,17 +41,22 @@ function fmtValue(key: string, v: number | boolean | null): string {
     case "supply_profit_pct":
       return `${v.toFixed(1)}%`;
     case "mayer_multiple":
+    case "mayer_high":
     case "sopr":
     case "mvrv_zscore":
+    case "mvrv_zscore_high":
+    case "nupl":
+    case "puell_multiple":
       return v.toFixed(3);
     case "rsi_14d":
+    case "rsi_14w_high":
       return v.toFixed(1);
     default:
       return String(v);
   }
 }
 
-export default function IndicatorTable({ row }: { row: IndicatorRow }) {
+export default function IndicatorTable({ row, keys }: { row: IndicatorRow; keys: string[] }) {
   const detail = row.indicators_detail || {};
   return (
     <div className="overflow-x-auto rounded-xl bg-panel p-1">
@@ -59,7 +70,7 @@ export default function IndicatorTable({ row }: { row: IndicatorRow }) {
           </tr>
         </thead>
         <tbody>
-          {ORDER.map((key) => {
+          {keys.map((key) => {
             const d = detail[key];
             const available = d ? d.available : false;
             const triggered = d ? d.triggered : false;

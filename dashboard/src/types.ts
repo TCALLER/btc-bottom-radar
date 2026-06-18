@@ -24,5 +24,13 @@ export interface IndicatorRow {
   triggered_count: number;
   available_count: number;
   signals_triggered: string[];
+  // top / sell radar
+  rsi_14w: number | null;
+  pi_cycle_top: boolean | null;
+  nupl: number | null;
+  puell_multiple: number | null;
+  top_score: number;
+  top_tier: string;
+  top_signals_triggered: string[];
   indicators_detail: Record<string, IndicatorDetail>;
 }

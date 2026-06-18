@@ -16,6 +16,21 @@
     "naderend":{"min":50,"max":74,"emoji":"🟠"},
     "sterke_bodem_confluentie":{"min":75,"max":100,"emoji":"🔴"}
   },
+  "top_indicators": {
+    "pi_cycle_top":    {"weight":20,"source":"price","optional":false,"rule":"sma_cross_above","fast":"SMA111","slow":"SMA350","factor":2.0},
+    "mvrv_zscore_high":{"weight":18,"source":"onchain","optional":true,"rule":"gte","top_value":7,"reuses":"mvrv_zscore"},
+    "mayer_high":      {"weight":14,"source":"price","optional":false,"rule":"gt","top_value":2.4,"basis":"SMA200_daily"},
+    "rsi_14w_high":    {"weight":10,"source":"price","optional":false,"rule":"gt","top_value":80},
+    "fear_greed_high": {"weight":8, "source":"alternative.me","optional":false,"rule":"gte","top_value":90},
+    "nupl":            {"weight":16,"source":"onchain","optional":true,"rule":"gt","top_value":0.75},
+    "puell_multiple":  {"weight":14,"source":"onchain","optional":true,"rule":"gt","top_value":4}
+  },
+  "top_score_tiers": {
+    "neutraal":{"min":0,"max":24,"emoji":"⚪"},
+    "watch":{"min":25,"max":49,"emoji":"🟡"},
+    "verhit":{"min":50,"max":74,"emoji":"🟠"},
+    "sterke_top_confluentie":{"min":75,"max":100,"emoji":"🔴"}
+  },
   "scoring": {"method":"weighted_normalized",
     "formula":"round(100 * sum(weight where available and triggered) / sum(weight where available))",
     "also_report":"triggered_count_of_available"},

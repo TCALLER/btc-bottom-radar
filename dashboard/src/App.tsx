@@ -2,12 +2,18 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import type { IndicatorRow } from "./types";
 import Gauge from "./components/Gauge";
-import IndicatorTable from "./components/IndicatorTable";
+import IndicatorTable, { BOTTOM_KEYS, TOP_KEYS } from "./components/IndicatorTable";
 import ScoreChart from "./components/ScoreChart";
+
+interface HistPoint {
+  captured_date: string;
+  bottom_score: number;
+  top_score: number;
+}
 
 export default function App() {
   const [latest, setLatest] = useState<IndicatorRow | null>(null);
-  const [history, setHistory] = useState<{ captured_date: string; bottom_score: number }[]>([]);
+  const [history, setHistory] = useState<HistPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -22,13 +28,13 @@ export default function App() {
 
         const { data: hist, error: e2 } = await supabase
           .from("indicators")
-          .select("captured_date,bottom_score")
+          .select("captured_date,bottom_score,top_score")
           .order("captured_date", { ascending: true })
           .limit(180);
         if (e2) throw e2;
 
         setLatest((latestRows?.[0] as IndicatorRow) ?? null);
-        setHistory((hist as { captured_date: string; bottom_score: number }[]) ?? []);
+        setHistory((hist as HistPoint[]) ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -45,7 +51,7 @@ export default function App() {
             <span className="text-accent">₿</span> BTC Bodem Radar
           </h1>
           <p className="text-gray-400 text-sm">
-            Dagelijkse cyclus-bodem monitor — geen financieel advies.
+            Dagelijkse cyclus-bodem & -top monitor — geen financieel advies.
           </p>
         </div>
       </header>
@@ -59,37 +65,53 @@ export default function App() {
 
       {latest && (
         <>
-          <section className="grid sm:grid-cols-2 gap-4 mb-6">
+          <section className="grid sm:grid-cols-2 gap-4 mb-4">
             <div className="rounded-xl bg-panel p-5 flex flex-col items-center justify-center">
-              <Gauge score={latest.bottom_score} tier={latest.tier} />
+              <Gauge score={latest.bottom_score} tier={latest.tier} title="Bodem" />
               <div className="mt-3 text-sm text-gray-400">
                 {latest.triggered_count} van {latest.available_count} signalen actief
               </div>
             </div>
-            <div className="rounded-xl bg-panel p-5 flex flex-col justify-center gap-2">
+            <div className="rounded-xl bg-panel p-5 flex flex-col items-center justify-center">
+              <Gauge score={latest.top_score} tier={latest.top_tier} title="Top" />
+              <div className="mt-3 text-sm text-gray-400">
+                {(latest.top_signals_triggered?.length ?? 0)} top-signalen actief
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl bg-panel p-5 mb-6 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+            <div>
               <div className="text-gray-400 text-sm">BTC prijs</div>
               <div className="text-3xl font-bold">
                 {latest.price_usd
                   ? `$${latest.price_usd.toLocaleString("nl-NL", { maximumFractionDigits: 0 })}`
                   : "n.b."}
               </div>
-              <div className="text-sm text-gray-400">
-                Daling vanaf ATH:{" "}
-                {latest.drawdown_from_ath_pct != null
-                  ? `${latest.drawdown_from_ath_pct.toFixed(1)}%`
-                  : "n.b."}
-              </div>
-              <div className="text-xs text-gray-500 mt-1">Laatste meting: {latest.captured_date}</div>
+            </div>
+            <div className="text-sm text-gray-400">
+              Daling vanaf ATH:{" "}
+              {latest.drawdown_from_ath_pct != null
+                ? `${latest.drawdown_from_ath_pct.toFixed(1)}%`
+                : "n.b."}
+            </div>
+            <div className="text-xs text-gray-500 ml-auto self-end">
+              Laatste meting: {latest.captured_date}
             </div>
           </section>
 
           <section className="mb-6">
-            <h2 className="text-lg font-semibold mb-2">Indicatoren</h2>
-            <IndicatorTable row={latest} />
+            <h2 className="text-lg font-semibold mb-2">Bodem-indicatoren</h2>
+            <IndicatorTable row={latest} keys={BOTTOM_KEYS} />
           </section>
 
           <section className="mb-6">
-            <h2 className="text-lg font-semibold mb-2">Bodemscore over tijd</h2>
+            <h2 className="text-lg font-semibold mb-2">Top-indicatoren</h2>
+            <IndicatorTable row={latest} keys={TOP_KEYS} />
+          </section>
+
+          <section className="mb-6">
+            <h2 className="text-lg font-semibold mb-2">Bodem- &amp; topscore over tijd</h2>
             <div className="rounded-xl bg-panel p-3">
               <ScoreChart data={history} />
             </div>
@@ -98,8 +120,8 @@ export default function App() {
       )}
 
       <footer className="text-xs text-gray-600 mt-8 border-t border-gray-800 pt-4">
-        Monitoringtool, geen financieel advies. Bodems zijn pas achteraf te bevestigen. Deze tool
-        plaatst nooit orders en zegt nooit "koop".
+        Monitoringtool, geen financieel advies. Bodems én tops zijn pas achteraf te bevestigen. Deze
+        tool plaatst nooit orders en zegt nooit "koop" of "verkoop".
       </footer>
     </div>
   );
