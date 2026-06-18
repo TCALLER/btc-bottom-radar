@@ -62,6 +62,35 @@ npm run preview      # local preview server
 ```
 
 Reads `dashboard/.env.local` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_DB_SCHEMA=btc`).
+The dashboard shows **two gauges** — "Bodem" (bottom) and "Top" — plus per-radar indicator tables and
+a dual score-over-time chart. The buy ladder and budget are **never** shown (privacy).
+
+## Top / sell radar
+
+A symmetric counterpart to the bottom radar (`collector/top_radar.py`, `top_indicators` in config):
+Pi-Cycle Top (SMA111 ≥ 2×SMA350), MVRV Z-Score ≥ 7, Mayer Multiple > 2.4, weekly RSI > 80,
+Fear & Greed ≥ 90, NUPL > 0.75, Puell Multiple > 4. `top_score = round(100·Σweight(available &
+triggered)/Σweight(available))`; tiers `neutraal`/`watch`/`verhit`/`sterke_top_confluentie`. It
+**alerts only** (tilt toward a top, honest framing, Belgian meerwaarde-timing in mind) — it never
+builds a fixed-euro sell ladder and never says "verkoop".
+
+## Buy ladder (notify-only — never trades)
+
+A signal-driven buy ladder lives **in Telegram + CLI only** — its budget/plan are personal and have
+**no anon policy** (never exposed on the public dashboard). Config in `config/ladder.json`
+(budget + 3 tranches 30/30/40%). Rules are explicit predicates (no `eval`). When a tranche's rule
+becomes true on a daily run it sends one Dutch "overweeg ~€X inzetten — jouw beslissing, geen
+koopopdracht" alert and marks itself fired (idempotent).
+
+```bash
+python -m collector.ladder --status                                   # tranche state
+python -m collector.ladder --simulate --score 76                      # which tranches WOULD fire (no DB write)
+python -m collector.ladder --simulate --set mvrv_zscore=0.05 --set fear_greed=8
+python -m collector.ladder --simulate --score 62 --send-test          # also sends a 🧪 SIMULATIE test ping
+```
+
+Simulation is **side-effect-free**: it builds a synthetic row from the latest real row + overrides,
+recomputes tiers from config, prints a table, and never touches `btc.ladder_state`.
 
 ## Notes & stubs
 

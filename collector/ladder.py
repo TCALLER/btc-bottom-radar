@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sys
 
 from .config import PROJECT_ROOT, load_thresholds, setup_logging
 from . import notify_telegram as tg
@@ -238,7 +239,7 @@ def print_decision_table(decisions: list[dict]) -> None:
         print(f"{d['id']:<3}{d['label'][:44]:<46}{fmt_eur(d['amount']):>8}  "
               f"{str(d['rule_true']):<9}  {str(d['already_fired']):<5}  "
               f"{'JA' if d['would_fire'] else 'nee'}")
-        print(f"     ↳ {d['why']}")
+        print(f"     -> {d['why']}")
 
 
 def simulate(score: int | None, sets: list[str], send_test: bool) -> int:
@@ -289,6 +290,12 @@ def show_status() -> int:
 
 
 def main() -> int:
+    # Emit UTF-8 regardless of console codepage (Windows cp1252 would choke on €/emoji).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
     p = argparse.ArgumentParser(description="BTC buy-ladder (notify-only, never trades)")
     p.add_argument("--status", action="store_true", help="show ladder tranche state")
     p.add_argument("--simulate", action="store_true", help="dry-run: which tranches WOULD fire")

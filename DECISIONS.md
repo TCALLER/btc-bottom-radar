@@ -187,3 +187,70 @@ anon key (game data; brief exposure accepted).
 
 **Result:** the public repo + deployed bundle contain **no hattrick ref or key** (verified count 0);
 BTC runs entirely on its own project `ajunjsegdeyqjtjllnxg`; hattrick is untouched/baseline.
+
+---
+
+# Buy ladder + top/sell radar + dashboard top gauge (2026-06-18)
+
+## PART A — Buy ladder (notify-only, never trades)
+- `config/ladder.json`: budget **€10.121**, 3 tranches 30/30/40% →
+  **€3.036 / €3.036 / €4.048** (10121×0.40 = 4048.4 → €4.048; the brief's ~€4.049 was approximate).
+- Rules are explicit predicates in `collector/ladder.py` (no `eval`):
+  `tier_naderend_and_ma200w`, `score_gte_60`, `score_gte_75_or_capitulation`.
+- **Privacy:** `btc.ladder_state` has RLS on and **no anon policy / no anon grant** — the budget
+  and plan are never readable via the public dashboard key. Ladder lives in Telegram + CLI only.
+- Integrated into the daily flow: after the row is persisted, `ladder.evaluate(row)` fires each
+  pending tranche whose rule is true exactly once (Dutch Telegram + DB update + `alerts` log).
+  Idempotent; wrapped so a ladder error can never break the daily collection.
+- **Simulation (`--simulate`) is side-effect-free** — builds a synthetic row from the latest real
+  row + `--set k=v` / `--score` overrides, recomputes tiers from config, prints a table, optionally
+  sends a labelled `🧪 SIMULATIE` test. It never writes to `btc.ladder_state`.
+- Fixed a Windows-console crash: CLI now forces UTF-8 stdout (cp1252 choked on €/emoji/↳).
+
+### Proof — `--status`
+```
+Buy-ladder — BTC budget €10.121 (EUR)
+1  Trap 1 — naderend + 200w-MA aangeraakt   3.036  pending
+2  Trap 2 — score >= 60                      3.036  pending
+3  Trap 3 — sterke confluentie of capitulatie 4.048  pending
+```
+### Proof — `--simulate --score 76 --send-test`
+```
+1 Trap 1  rule_true=False  WOULD_FIRE=nee   (tier=sterke_bodem_confluentie, ma_200w=False)
+2 Trap 2  rule_true=True   WOULD_FIRE=JA    (bottom_score=76 >=60)
+3 Trap 3  rule_true=True   WOULD_FIRE=JA    (score=76 >=75)
+🧪 SIMULATIE Telegram verzonden: True
+```
+A second `--status` was **unchanged** (all pending) → simulation proven side-effect-free.
+
+### Trap 1 fire status — honest note
+Trap 1's condition (`tier=='naderend'` AND `ma_200w` triggered) was true earlier today
+(score 50 / naderend at 16:32 UTC), but the ladder code's first live run was 18:12 UTC, by which
+time **price ($62,611) had risen just above the 200-week MA ($62,596)** → `ma_200w` no longer
+triggers, score fell to **38 / watch**. So Trap 1 **correctly did NOT fire** (rule false). No fake
+fire was created. `btc.alerts` for the 18:12 run shows only `change` + `digest` (real, delivered);
+`ladder_state` remains all `pending`. If price dips back below the 200w-MA, Trap 1 fires that day.
+
+## PART B — Top / sell radar (symmetric, alerts only)
+- `top_indicators` + `top_score_tiers` in `config/thresholds.json`; `collector/top_radar.py`
+  computes 7 signals, scored with the same weighted-normalized math (`scoring.compute_top_score`).
+- Indicators (today's live values): Pi-Cycle Top (SMA111 vs 2×SMA350) = false; MVRV high (≥7) =
+  0.4234; Mayer high (>2.4); weekly RSI (>80) = **35.27**; F&G greed (≥90) = 15; **NUPL (>0.75) =
+  0.178** (free `/v1/nupl/last` → `nupl`); **Puell (>4) = 0.647** (`/v1/puell-multiple/last` →
+  `puellMultiple`). All probed live; optional on-chain ones degrade gracefully.
+- New additive columns on `btc.indicators` (anon-readable — non-personal): `rsi_14w`,
+  `pi_cycle_top`, `nupl`, `puell_multiple`, `top_score`, `top_tier`, `top_signals_triggered`.
+- Top alert (Telegram, on top-tier change / new top signal) — honest tilt-not-sell framing, mentions
+  Belgian meerwaarde-timing; never a fixed-euro sell ladder. **Today top_score = 0 (neutraal, 0/7)**.
+- Top-sim proof: `--simulate --set mvrv_zscore=8 --set top_score=80 --send-test` →
+  `top_score=80 (sterke_top_confluentie)`, `🧪 SIMULATIE Telegram verzonden: True`.
+
+## PART C — Dashboard second gauge
+- Second gauge "Top" beside "Bodem"; separate Bodem/Top indicator tables; dual score-over-time
+  chart (Bodemscore + Topscore). Dutch labels, dark theme. **Ladder/budget NOT on the dashboard.**
+- Rebuilt + redeployed via the Pages workflow; **deployed bundle re-verified**: old hattrick ref
+  count = 0, new ref `ajunjsegdeyqjtjllnxg` present. Live: https://tcaller.github.io/btc-bottom-radar/
+
+## Today's reading (2026-06-18, project ajunjsegdeyqjtjllnxg)
+**bottom_score = 38 (watch, 3/9: pi_cycle_bottom, sopr, supply_profit_pct)** ·
+**top_score = 0 (neutraal, 0/7)** · price ~$62.6k.
