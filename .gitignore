@@ -26,3 +26,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# stray shell artifacts (accidental redirect/brace output)
+8}
+str
