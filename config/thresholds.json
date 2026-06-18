@@ -1,0 +1,26 @@
+{
+  "indicators": {
+    "pi_cycle_bottom":        {"weight":18,"source":"price","optional":false,"rule":"cross_below","fast":"EMA150","slow":"SMA471"},
+    "ma_200w":                {"weight":15,"source":"price","optional":false,"rule":"price_below","basis":"SMA200_weekly"},
+    "mayer_multiple":         {"weight":12,"source":"price","optional":false,"rule":"lt","bottom_value":0.8,"basis":"SMA200_daily"},
+    "rsi_14d":                {"weight":8, "source":"price","optional":false,"rule":"lt","bottom_value":30},
+    "drawdown_from_ath_pct":  {"weight":12,"source":"price","optional":false,"rule":"gte","bottom_value":75},
+    "fear_greed":             {"weight":8, "source":"alternative.me","optional":false,"rule":"lte","bottom_value":10,"watch_value":20},
+    "mvrv_zscore":            {"weight":20,"source":"onchain","optional":true,"rule":"lte","bottom_value":0.1,"watch_value":0.5},
+    "sopr":                   {"weight":12,"source":"onchain","optional":true,"rule":"lt_sustained","bottom_value":1.0,"sustained_days":14},
+    "supply_profit_pct":      {"weight":15,"source":"onchain","optional":true,"rule":"lte","bottom_value":55}
+  },
+  "score_tiers": {
+    "neutraal":{"min":0,"max":24,"emoji":"⚪"},
+    "watch":{"min":25,"max":49,"emoji":"🟡"},
+    "naderend":{"min":50,"max":74,"emoji":"🟠"},
+    "sterke_bodem_confluentie":{"min":75,"max":100,"emoji":"🔴"}
+  },
+  "scoring": {"method":"weighted_normalized",
+    "formula":"round(100 * sum(weight where available and triggered) / sum(weight where available))",
+    "also_report":"triggered_count_of_available"},
+  "alerting": {"telegram":true,"alert_on":["new_signal_triggered","tier_change","score_delta_gte_10"],
+    "score_delta_threshold":10,"dedupe":"compare_to_last_snapshot","daily_digest":true,
+    "timezone":"Europe/Brussels","language":"nl"},
+  "meta": {"all_time_high_usd":126000,"ath_date":"2025-10","reference_date":"2026-06-18","reference_price_usd":63958}
+}

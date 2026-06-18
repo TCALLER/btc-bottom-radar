@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+dashboard/.env.local
+.sbkeys.json
+.newkeys.json
+.keyvals.tmp
+.dbpass.tmp
+.access_token
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+
+# Node / dashboard
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
