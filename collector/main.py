@@ -188,10 +188,13 @@ def run(send_digest: bool) -> int:
     today_view["top_available_count"] = top_score["available_count"]
     today_view["top_triggered_count"] = top_score["triggered_count"]
 
+    # Ladder state for action-oriented messaging (seed missing tranches).
+    ladder_state = ladder_engine.seed_state(client, ladder_engine.load_ladder())
+
     if telegram_ok:
         events = tg.detect_changes(today_view, previous, cfg)
         if events:
-            msg = tg.format_alert(events, today_view)
+            msg = tg.format_alert(events, today_view, ladder_state, cfg)
             if tg.send_message(msg):
                 db.insert_alert(client, {
                     "alert_type": "change", "tier": score["tier"],
@@ -210,23 +213,25 @@ def run(send_digest: bool) -> int:
                     "payload": {"events": top_events}, "delivered": True,
                 })
 
-        if send_digest:
-            digest = tg.format_digest(today_view, results, cfg)
-            digest = tg.append_top_to_digest(digest, today_view, top_results, cfg)
-            delivered = tg.send_message(digest)
-            db.insert_alert(client, {
-                "alert_type": "digest", "tier": score["tier"],
-                "bottom_score": score["bottom_score"], "message": digest,
-                "payload": {"signals_triggered": score["signals_triggered"],
-                            "top_signals_triggered": top_score["top_signals_triggered"]},
-                "delivered": delivered,
-            })
-
-    # Buy-ladder: evaluate AFTER the row is persisted (notify-only, idempotent).
+    # Buy-ladder: evaluate AFTER persist and BEFORE the digest, so the digest's
+    # "Jouw ladder" section reflects any tranche that fired this run (notify-only,
+    # idempotent). Never lets a ladder error break the daily run.
     try:
         ladder_engine.evaluate(row, client=client)
-    except Exception as exc:  # noqa: BLE001 - ladder must never break the daily run
+    except Exception as exc:  # noqa: BLE001
         log.error("ladder evaluation failed (non-fatal): %s", exc)
+
+    if telegram_ok and send_digest:
+        ladder_state = ladder_engine.fetch_state(client)  # fresh, post-fire
+        digest = tg.format_digest(today_view, results, top_results, cfg, ladder_state)
+        delivered = tg.send_message(digest)
+        db.insert_alert(client, {
+            "alert_type": "digest", "tier": score["tier"],
+            "bottom_score": score["bottom_score"], "message": digest,
+            "payload": {"signals_triggered": score["signals_triggered"],
+                        "top_signals_triggered": top_score["top_signals_triggered"]},
+            "delivered": delivered,
+        })
 
     log.info("done. row id=%s date=%s", saved.get("id"), saved.get("captured_date"))
     return 0

@@ -161,14 +161,18 @@ def evaluate(row: dict, *, dry_run: bool = False, client=None) -> list[dict]:
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    # Traps that remain pending after this run (not already fired, not firing now).
+    remaining = [x["label"] for x in decisions if not x["already_fired"] and not x["would_fire"]]
+    remaining_txt = ", ".join(remaining) if remaining else "geen — ladder voltooid"
     for d in decisions:
         if not d["would_fire"]:
             continue
         amount = fmt_eur(d["amount"])
-        msg = (f"🪜 <b>Ladder</b> — {d['label']} bereikt. "
-               f"Overweeg ~€{amount} inzetten "
-               f"(score {row.get('bottom_score')}, {row.get('tier')}). "
-               f"Jouw beslissing — geen koopopdracht.")
+        reason = tg.trap_reason_text(d["id"], row)
+        msg = (f"🪜🔔 <b>KOOPMOMENT</b> — {d['label']} bereikt\n"
+               f"Voorwaarde vervuld: {reason}.\n"
+               f"👉 Overweeg ~€{amount} in te zetten. Jouw beslissing — geen koopopdracht.\n"
+               f"Daarna nog open: {remaining_txt}.")
         delivered = tg.send_message(msg)
         client.table("ladder_state").update({
             "status": "fired", "fired_at": now_iso, "fired_on_date": today,
@@ -228,6 +232,13 @@ def build_synthetic_row(cfg: dict, score: int | None, sets: list[str], client) -
         row["tier"] = scoring._tier_for(int(row["bottom_score"]), cfg["score_tiers"])
     if row.get("top_score") is not None:
         row["top_tier"] = scoring._tier_for(int(row["top_score"]), cfg["top_score_tiers"])
+    # enrich counts/emojis so next_action() renders like the real digest
+    row["triggered_count"] = len(row.get("signals_triggered") or [])
+    row.setdefault("available_count", len(cfg["indicators"]))
+    row["top_triggered_count"] = len(row.get("top_signals_triggered") or [])
+    row.setdefault("top_available_count", len(cfg["top_indicators"]))
+    row["tier_emoji"] = cfg["score_tiers"].get(row.get("tier"), {}).get("emoji", "")
+    row["top_tier_emoji"] = cfg["top_score_tiers"].get(row.get("top_tier"), {}).get("emoji", "")
     return row
 
 
@@ -257,18 +268,25 @@ def simulate(score: int | None, sets: list[str], send_test: bool) -> int:
     print(f"\nTop-radar (synthetisch): top_score={top_score} tier={top_tier}")
 
     if send_test:
+        # Preview in the SAME action-led style as the real digest/change message.
+        na = tg.next_action(row, state, cfg)
         would = [d for d in decisions if d["would_fire"]]
-        lines = ["🧪 <b>SIMULATIE</b> — geen echte trigger",
-                 f"Bodem: score {row.get('bottom_score')} ({row.get('tier')})"]
+        lines = [
+            "🧪 <b>SIMULATIE</b> — geen echte trigger",
+            f"📅 {tg._date(row.get('captured_date'))} · BTC {tg._usd(row.get('price_usd'))}",
+            "",
+            "📊 <b>Stand van zaken</b>",
+            f"Bodem: {na['bottom_text']}",
+            f"Top: {na['top_text']}",
+            "",
+            f"🎯 <b>Actie:</b> {na['action_line']}",
+        ]
         if would:
+            lines.append("")
             for d in would:
-                lines.append(f"🪜 Zou vuren: {d['label']} (~€{fmt_eur(d['amount'])})")
-        else:
-            lines.append("🪜 Geen ladder-trap zou nu vuren.")
-        if top_score is not None:
-            tier_emoji = cfg["top_score_tiers"].get(top_tier, {}).get("emoji", "")
-            lines.append(f"📈 Top-radar: {tier_emoji} {top_score}/100 ({top_tier})")
-        lines.append("(test, geen echte trigger)")
+                lines.append(f"🪜 Zou nu vuren: {d['label']} (~€{fmt_eur(d['amount'])}) — "
+                             f"{tg.trap_reason_text(d['id'], row)}")
+        lines += ["", "(test, geen echte trigger)"]
         ok = tg.send_message("\n".join(lines))
         print(f"\n🧪 SIMULATIE Telegram verzonden: {ok}")
     return 0

@@ -262,3 +262,39 @@ fire was created. `btc.alerts` for the 18:12 run shows only `change` + `digest` 
   anon select; anon read of `btc.latest` now returns `top_score/top_tier/rsi_14w/nupl/puell_multiple`.
 - **Privacy re-verified:** anon `GET /rest/v1/ladder_state` → `42501 permission denied` (no anon
   policy/grant). The ladder/budget is not reachable with the public key.
+
+---
+
+# Action-led Telegram messages (2026-06-18)
+
+Rewrote `collector/notify_telegram.py` so messages **lead with meaning + action**, not an
+indicator dump. New helper `next_action(row, ladder_state, cfg)` returns plain-language bottom/top
+state, a "what to do" line, and the nearest *pending* ladder trap (lowest `tranche_id` with
+status `pending`) with its human condition + price level + distance.
+
+**What-to-do logic:** top_tier ∈ {verhit, sterke_top_confluentie} → take-profit cue; elif
+bottom tier == sterke_bodem_confluentie → "diepe koopzone, overweeg resterende trap(pen)"; elif a
+trap fired this run → handled by `ladder.py`'s own fire message; else → "afwachten; dichtstbijzijnde
+koop = <nearest pending trap>". Trap conditions in human terms: Trap 1 `koers < 200w-MA ($X=ma_200w)`
+(afstand price−X); Trap 2 `bodemscore ≥ 60 (~ koers < $Y=0.8·sma_200d)`; Trap 3 `capitulatie:
+F&G ≤10, of −75% ($Z=0.25·ath), of MVRV-Z ≤0,1`.
+
+- **DIGEST** sections (in order): header (DD/MM/YYYY + prijs + % onder ATH) · "Stand van zaken"
+  (Bodem + Top in mensentaal) · "Wat moet jij nu doen?" · "Jouw ladder" (reads `btc.ladder_state`
+  via service-role; budget shown — Telegram is private) · "Bodemsignalen (X van Y)" + "Topsignalen
+  (X van Y)" ✅/➖/⚪ lists last · disclaimer. A ⚠️ line appears when `available_count < 9`
+  ("On-chain tijdelijk onbeschikbaar — score over X/Y signalen").
+- **CHANGE**: short — header + tier/score change + one "🎯 Actie" line (nearest trap).
+- **LADDER-FIRE** (`ladder.py`): "🪜🔔 KOOPMOMENT — {label} bereikt / Voorwaarde vervuld: {reden} /
+  👉 Overweeg ~€{bedrag} in te zetten. Jouw beslissing — geen koopopdracht. / Daarna nog open:
+  {resterende traps}."
+- **TOP-ALERT**: "📈🔔 TOP-RADAR — let op / Topscore {score}/100 ({tier}) … 👉 Overweeg (deels)
+  winst nemen — jouw beslissing + Belgische meerwaarde-timing. Geen verkoopopdracht."
+- The ladder now runs **before** the digest in `main.py`, so "Jouw ladder" reflects same-run fires.
+
+### Proof (delivered=true)
+- `--simulate --score 76 --send-test` → CLI shows Trap 2 + 3 WOULD fire; a 🧪 SIMULATIE ping in the
+  new action-led format arrived.
+- `python -m collector.main --digest` → real digest delivered. Today: **bottom_score 38 (watch,
+  3/9)**, **top_score 0 (neutraal, 0/7)**, BTC ~$62.6k, −50,3% onder ATH; nearest buy = Trap 1
+  (koers < 200w-MA $62.596, nog ~$7 te zakken).

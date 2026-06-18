@@ -92,6 +92,17 @@ python -m collector.ladder --simulate --score 62 --send-test          # also sen
 Simulation is **side-effect-free**: it builds a synthetic row from the latest real row + overrides,
 recomputes tiers from config, prints a table, and never touches `btc.ladder_state`.
 
+## Telegram messages (action-led)
+
+Messages lead with **meaning + action**, not an indicator dump. `next_action()` derives the
+plain-language bottom/top state, a "what to do" line, and the nearest *pending* ladder trap (with
+its human condition, price level and distance). The **digest** has fixed sections — header
+(date · price · % under ATH), "Stand van zaken", "Wat moet jij nu doen?", "Jouw ladder" (private —
+budget shown only in Telegram), and the ✅/➖/⚪ signal lists last — plus a ⚠️ line when on-chain is
+temporarily unavailable. The **change** message is a short header + the tier/score delta + one
+"🎯 Actie" line. A fired ladder trap sends a "🪜🔔 KOOPMOMENT" message (condition met, amount,
+remaining traps); the top radar sends "📈🔔 TOP-RADAR — let op". None of them is ever a buy/sell order.
+
 ## Database schema
 
 `db/schema.sql` is the canonical, idempotent source-of-truth for the `btc` schema (tables, RLS,
