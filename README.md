@@ -135,9 +135,9 @@ Secrets live in the Edge Function env (never in the repo); deployed `verify_jwt=
 secret header + chat allowlist are the gate. Endpoint:
 `https://ajunjsegdeyqjtjllnxg.supabase.co/functions/v1/telegram-bot`.
 
-> Note: a Telegram bot can be either webhooked **or** long-polled, not both. If @flowgenius_bot is
-> also used by another poller, give the radar bot its own BotFather token (set it as the function's
-> `TELEGRAM_BOT_TOKEN`) and re-run `setWebhook`. See `DECISIONS.md`.
+The radar runs on its **own dedicated bot** (`@tom_btcradar_bot`) — used by both the collector and the
+Edge Function webhook — so it never conflicts with the separate bot that backs the local Claude
+Telegram channel (a Telegram bot can be webhooked **or** long-polled, not both). See `DECISIONS.md`.
 
 ## Database schema
 

@@ -391,3 +391,12 @@ function's `TELEGRAM_BOT_TOKEN` and re-run `setWebhook`) — both coexist; or (B
 Telegram channel poller and dedicate @flowgenius_bot to the webhook (loses the Claude DM bridge).
 Option A is recommended (stable). Everything else is deployed and ready; the bot goes live the moment
 a non-polled token backs the webhook.
+
+## Resolution — dedicated bot (2026-06-18)
+Owner created a dedicated bot **@tom_btcradar_bot** via BotFather. Its token now backs **both** the
+collector and the Edge Function (`TELEGRAM_BOT_TOKEN` updated in `.env`, the GitHub repo secret, and
+the Edge Function secret). The webhook is registered on this bot and **persists** (url live,
+pending=0, last_error none) because it isn't long-polled. `/radar` + `/ladder` reply correctly;
+the two refusal tests still pass (no secret → 401; wrong chat → 200 silent). **@flowgenius_bot is
+left untouched** (webhook removed/empty) so the local Claude Telegram channel keeps using it via
+polling. No bot token is committed — only code + docs.
