@@ -400,3 +400,6 @@ pending=0, last_error none) because it isn't long-polled. `/radar` + `/ladder` r
 the two refusal tests still pass (no secret → 401; wrong chat → 200 silent). **@flowgenius_bot is
 left untouched** (webhook removed/empty) so the local Claude Telegram channel keeps using it via
 polling. No bot token is committed — only code + docs.
+
+## /btc command — live price (2026-06-18)
+Added a `/btc` command to the Edge Function: fetches the LIVE BTC price from Kraken's public ticker (no key; on failure replies with the daily snapshot + "live koers tijdelijk niet beschikbaar", never faked), reads `btc.latest`, and shows live vs daily snapshot vs the 200w-MA / Trap 2 (0.8·sma_200d) / Trap 3 (0.25·ATH) levels. Read-only; redeployed (verify_jwt=false); `/help` lists it; verified delivered.

@@ -125,9 +125,10 @@ ARMEER/KOOPMOMENT/VANGNET always send when they occur.
 A Supabase Edge Function (`supabase/functions/telegram-bot/index.ts`) lets the owner query state by
 typing commands. It is **read-only** — it reads the `btc` tables and replies; it never trades.
 
-Commands (Dutch, € shown at every trap): `/help`, `/radar` (price, bottom & top score, nearest
+Commands (Dutch, € shown at every trap): `/btc` (LIVE Kraken price + 24h %, vs the daily snapshot
+and vs the ladder levels — read-only, no DB write), `/radar` (price, bottom & top score, nearest
 non-fired trap), `/ladder` (private — per-trap status + €, ingezet/droog kruit/gem. instap),
-`/positions` (recorded buys + totals), `/digest` (the last stored digest).
+`/positions` (recorded buys + totals), `/digest` (the last stored digest), `/help`.
 
 **Locked down:** the webhook verifies the `x-telegram-bot-api-secret-token` header against a secret
 (else 401) and only acts on the owner's `chat.id` (any other chat is silently ignored with 200).

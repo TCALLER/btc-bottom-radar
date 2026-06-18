@@ -108,6 +108,7 @@ function threshold(tr: any): number | null {
 async function cmdHelp(): Promise<string> {
   return [
     "🤖 <b>BTC Radar bot</b> — alleen-lezen, handelt nooit.",
+    "/btc — live koers vs dagmeting &amp; jouw ladder-niveaus",
     "/radar — prijs, bodem- &amp; topscore, dichtstbijzijnde trap",
     "/ladder — jouw ladder (privé): status + € per trap",
     "/positions — geregistreerde aankopen + totalen",
@@ -187,6 +188,64 @@ async function cmdPositions(): Promise<string> {
   return lines.join("\n");
 }
 
+function pctSigned(n: number): string {
+  return (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(1).replace(".", ",") + "%";
+}
+
+async function cmdBtc(): Promise<string> {
+  // LIVE price from Kraken public ticker (no key). Never fake on failure.
+  let live: number | null = null;
+  let change: number | null = null;
+  try {
+    const res = await fetch("https://api.kraken.com/0/public/Ticker?pair=XBTUSD");
+    const j = await res.json();
+    if (j && (!Array.isArray(j.error) || j.error.length === 0) && j.result) {
+      const k = j.result.XXBTZUSD ?? j.result[Object.keys(j.result)[0]];
+      const c = num(k?.c?.[0]);
+      const o = num(Array.isArray(k?.o) ? k.o[0] : k?.o);
+      if (c !== null) live = c;
+      if (c !== null && o !== null && o !== 0) change = ((c - o) / o) * 100;
+    }
+  } catch (_) {
+    live = null;
+  }
+
+  const rows = await btc("latest?select=*");
+  const r = rows.length ? rows[0] : {};
+  const now = new Date().toLocaleTimeString("nl-BE", {
+    hour: "2-digit", minute: "2-digit", timeZone: "Europe/Brussels",
+  });
+  const snap = num(r.price_usd);
+  const ma = num(r.ma_200w);
+  const sma = num(r.sma_200d);
+  const ath = num(r.all_time_high_usd);
+  const t2 = sma !== null ? 0.8 * sma : null;
+  const t3 = ath !== null ? 0.25 * ath : null;
+
+  const lines = [`₿ <b>BTC live</b> — ${now}`];
+  if (live !== null) {
+    lines.push(`Live: ${usd(live)}${change !== null ? ` (${pctSigned(change)} / 24u)` : ""}`);
+  } else {
+    lines.push("Live koers tijdelijk niet beschikbaar.");
+  }
+  lines.push(`Dagmeting: ${usd(snap)} (${dmy(r.captured_date).slice(0, 5)})`);
+
+  const ref = live !== null ? live : snap;  // compare vs live; fall back to the snapshot
+  if (ref !== null && ma !== null) {
+    const d = ((ref - ma) / ma) * 100;
+    lines.push(`200w-MA: ${usd(ma)} → live ${pctSigned(d)} ${d >= 0 ? "erboven" : "eronder"}`);
+  }
+  if (ref !== null && t2 !== null) {
+    const d = ((ref - t2) / t2) * 100;
+    lines.push(`Trap 2 (~${usd(t2)}): ${pctSigned(d)} ${d >= 0 ? "hoger" : "lager"}`);
+  }
+  if (ref !== null && t3 !== null) {
+    const d = ((ref - t3) / t3) * 100;
+    lines.push(`Trap 3 capitulatie (~${usd(t3)}): ${Math.abs(d) <= 10 ? "dichtbij" : "nog ver"}`);
+  }
+  return lines.join("\n");
+}
+
 async function cmdDigest(): Promise<string> {
   const rows = await btc("alerts?select=message,sent_at&alert_type=eq.digest&order=sent_at.desc&limit=1");
   if (!rows.length) return "Nog geen digest opgeslagen.";
@@ -226,6 +285,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       case "/help":
       case "/start":
         reply = await cmdHelp();
+        break;
+      case "/btc":
+        reply = await cmdBtc();
         break;
       case "/radar":
         reply = await cmdRadar();
