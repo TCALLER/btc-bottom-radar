@@ -61,11 +61,37 @@ create index if not exists btc_alerts_sent_idx on btc.alerts (sent_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Buy-ladder state (PRIVATE — personal budget/plan; no anon policy/grant)
+-- 3-phase state machine: status = 'pending' -> 'armed' -> 'fired'.
 -- ---------------------------------------------------------------------------
 create table if not exists btc.ladder_state (
   tranche_id int primary key, label text not null, pct numeric not null, amount_eur numeric not null,
   status text not null default 'pending', fired_at timestamptz, fired_on_date date,
-  fired_price_usd numeric, fired_score int, rule text not null
+  fired_price_usd numeric, fired_score int, rule text not null,
+  -- arming / confirmation (anti-bull-trap rebound check)
+  confirm_rebound_pct numeric,
+  confirm_days int default 2,
+  armed_at timestamptz, armed_on_date date, armed_price_usd numeric,
+  low_since_arm_usd numeric,
+  confirm_streak int default 0,
+  fire_reason text
+);
+alter table btc.ladder_state
+  add column if not exists confirm_rebound_pct numeric,
+  add column if not exists confirm_days int default 2,
+  add column if not exists armed_at timestamptz,
+  add column if not exists armed_on_date date,
+  add column if not exists armed_price_usd numeric,
+  add column if not exists low_since_arm_usd numeric,
+  add column if not exists confirm_streak int default 0,
+  add column if not exists fire_reason text;
+
+-- ---------------------------------------------------------------------------
+-- Realised positions / buys (PRIVATE — no anon policy/grant)
+-- ---------------------------------------------------------------------------
+create table if not exists btc.positions (
+  id bigint generated always as identity primary key,
+  tranche_id int, bought_on date not null, amount_eur numeric not null,
+  price_usd numeric, btc_amount numeric, note text, created_at timestamptz default now()
 );
 
 -- ---------------------------------------------------------------------------
@@ -74,11 +100,13 @@ create table if not exists btc.ladder_state (
 alter table btc.indicators   enable row level security;
 alter table btc.alerts       enable row level security;
 alter table btc.ladder_state enable row level security;
+alter table btc.positions    enable row level security;
 
 -- Only btc.indicators is anon-readable.
 drop policy if exists "anon_read_btc_indicators" on btc.indicators;
 create policy "anon_read_btc_indicators" on btc.indicators for select to anon using (true);
--- btc.alerts and btc.ladder_state intentionally have NO anon policy.
+-- btc.alerts, btc.ladder_state and btc.positions intentionally have NO anon policy
+-- (personal financial info — never exposed via the public dashboard key).
 
 -- ---------------------------------------------------------------------------
 -- Grants
