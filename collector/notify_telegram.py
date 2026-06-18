@@ -46,18 +46,18 @@ DISCLAIMER = ("ℹ️ Monitoringtool, geen financieel advies. Bodems én tops zi
 TOP_DISCLAIMER = ("ℹ️ Monitoringtool, geen financieel advies. Tops zijn pas achteraf "
                   "te bevestigen. Geen verkoopopdracht.")
 
-# Plain-language tier phrases.
+# Plain-language tier phrases (Part 4 wording).
 BOTTOM_TIER_PHRASE = {
-    "neutraal": "neutraal — geen bodem in zicht",
-    "watch": "waakzaam — eerste bodemtekenen",
-    "naderend": "bodem nadert",
-    "sterke_bodem_confluentie": "sterke bodem-confluentie — diepe koopzone",
+    "neutraal": "nog rustig, geen bodem in zicht",
+    "watch": "we naderen, nog niet in de koopzone",
+    "naderend": "dicht bij de koopzone",
+    "sterke_bodem_confluentie": "diepe koopzone",
 }
 TOP_TIER_PHRASE = {
-    "neutraal": "neutraal — geen top in zicht",
+    "neutraal": "geen verkoopsignaal",
     "watch": "licht verhoogd",
-    "verhit": "verhit — voorzichtig worden",
-    "sterke_top_confluentie": "sterke top-confluentie — cyclustop nabij",
+    "verhit": "condities kantelen richting een top",
+    "sterke_top_confluentie": "condities kantelen richting een top",
 }
 
 
@@ -205,15 +205,67 @@ def trap_condition_text(trap_id: int, row: dict) -> str:
     return ""
 
 
-def trap_distance_text(trap_id: int, row: dict) -> str:
-    price = _num(row.get("price_usd"))
-    lvl = _trap_level(trap_id, row)
-    if price is None or lvl is None:
-        return ""
-    d = price - lvl
-    if d > 0:
-        return f"nog ~{_usd(d)} te zakken"
-    return "voorwaarde nu vervuld"
+def trap_amount(ladder_state: dict | None, tid: int) -> float | None:
+    return _num((ladder_state or {}).get(tid, {}).get("amount_eur"))
+
+
+def trap_threshold(tr: dict) -> float | None:
+    """Confirmation level: low_since_arm × (1 + confirm_rebound_pct/100)."""
+    low = _num(tr.get("low_since_arm_usd"))
+    pct = _num(tr.get("confirm_rebound_pct"))
+    if low is None or pct is None:
+        return None
+    return low * (1 + pct / 100.0)
+
+
+def trap_status_line(tr: dict, row: dict) -> str:
+    status = tr.get("status", "pending")
+    tid = tr.get("tranche_id")
+    if status == "armed":
+        return (f"BEWAPEND op {_usd(tr.get('armed_price_usd'))}, "
+                f"koop &gt; {_usd(trap_threshold(tr))}")
+    if status == "fired":
+        return f"KOOP-SIGNAAL {_date(tr.get('fired_on_date'))} ({tr.get('fire_reason') or '—'})"
+    return f"wacht op niveau ({trap_condition_text(tid, row)})"
+
+
+def action_for_trap(tid: int, tr: dict, row: dict, amount: float | None) -> str:
+    """Action phrasing for the nearest non-fired trap — ALWAYS shows the € amount."""
+    a = _eur(amount)
+    confirm_days = int(tr.get("confirm_days") or 2)
+    if tr.get("status") == "armed":
+        return (f"Trap {tid} (~€{a}) zodra koers &gt; {_usd(trap_threshold(tr))} "
+                f"(bevestiging, {confirm_days}d)")
+    if tid == 1:
+        return f"Trap 1 (~€{a}) zodra koers &lt; {_usd(row.get('ma_200w'))}"
+    if tid == 2:
+        s = _num(row.get("sma_200d"))
+        y = 0.8 * s if s is not None else None
+        return f"Trap 2 (~€{a}) zodra bodemscore ≥ 60 (~ koers &lt; {_usd(y)})"
+    if tid == 3:
+        a3 = _num(row.get("all_time_high_usd"))
+        z = 0.25 * a3 if a3 is not None else None
+        return (f"Trap 3 (~€{a}) bij capitulatie "
+                f"(Fear&amp;Greed ≤ 10, of −75% {_usd(z)}, of MVRV-Z ≤ 0,1)")
+    return f"Trap {tid} (~€{a})"
+
+
+def nearest_nonfired_trap(ladder_state: dict | None) -> int | None:
+    """Lowest tranche_id whose status is not 'fired' (pending OR armed)."""
+    if not ladder_state:
+        return None
+    ids = [tid for tid, r in ladder_state.items() if r.get("status") != "fired"]
+    return min(ids) if ids else None
+
+
+def trap_pairs(ladder_state: dict, ids: list[int]) -> tuple[str, float]:
+    """Return ('Trap 1 ~€3.036, Trap 2 ~€3.036', total_eur) for the given ids."""
+    parts, total = [], 0.0
+    for tid in ids:
+        amt = trap_amount(ladder_state, tid) or 0.0
+        total += amt
+        parts.append(f"Trap {tid} ~€{_eur(amt)}")
+    return ", ".join(parts) if parts else "geen", total
 
 
 def trap_reason_text(trap_id: int, row: dict) -> str:
@@ -241,58 +293,41 @@ def trap_reason_text(trap_id: int, row: dict) -> str:
     return ""
 
 
-def nearest_pending_trap(ladder_state: dict | None) -> int | None:
-    """Lowest tranche_id whose status is 'pending'."""
-    if not ladder_state:
-        return None
-    pending = [tid for tid, r in ladder_state.items() if r.get("status") == "pending"]
-    return min(pending) if pending else None
-
-
-def _ladder_label(ladder_state: dict, tid: int) -> str:
-    return (ladder_state.get(tid) or {}).get("label", f"Trap {tid}")
-
-
 # ---------------------------------------------------------------------------
-# next_action — plain-language state + what-to-do + nearest pending trap
+# next_action — what to do now (always with € amounts)
 # ---------------------------------------------------------------------------
 
-def next_action(row: dict, ladder_state: dict | None, cfg: dict) -> dict:
+def next_action(row: dict, ladder_state: dict | None, cfg: dict) -> str:
     bottom_tier = row.get("tier", "neutraal")
     top_tier = row.get("top_tier", "neutraal")
+    today = (row.get("captured_date") or "")[:10]
 
-    bottom_text = (f"{BOTTOM_TIER_PHRASE.get(bottom_tier, bottom_tier)} "
-                   f"({row.get('bottom_score')}/100, "
-                   f"{row.get('triggered_count')}/{row.get('available_count')} signalen)")
-    top_text = (f"{TOP_TIER_PHRASE.get(top_tier, top_tier)} "
-                f"({row.get('top_score')}/100, "
-                f"{row.get('top_triggered_count')}/{row.get('top_available_count')} signalen)")
-
-    nid = nearest_pending_trap(ladder_state)
-    nearest = None
-    if nid is not None:
-        nearest = {
-            "id": nid,
-            "label": _ladder_label(ladder_state, nid),
-            "condition": trap_condition_text(nid, row),
-            "distance": trap_distance_text(nid, row),
-        }
+    fired_today = []
+    nonfired = []
+    if ladder_state:
+        for tid in sorted(ladder_state):
+            tr = ladder_state[tid]
+            if tr.get("status") == "fired":
+                if str(tr.get("fired_on_date") or "")[:10] == today:
+                    fired_today.append(tid)
+            else:
+                nonfired.append(tid)
 
     if top_tier in ("verhit", "sterke_top_confluentie"):
-        action = ("📈 Overweeg (deels) <b>winst nemen</b> — de top-radar staat hoog. "
-                  "Jouw beslissing (+ Belgische meerwaarde-timing).")
-    elif bottom_tier == "sterke_bodem_confluentie":
-        action = ("🟢 <b>Diepe koopzone.</b> Overweeg de resterende ladder-trap(pen) "
-                  "in te zetten. Jouw beslissing — geen koopopdracht.")
-    elif nearest is not None:
-        dist = f" ({nearest['distance']})" if nearest["distance"] else ""
-        action = (f"⏳ Afwachten. Dichtstbijzijnde koop: <b>{nearest['label']}</b> — "
-                  f"{nearest['condition']}{dist}.")
-    else:
-        action = "✅ Alle ladder-trappen afgehandeld — afwachten."
-
-    return {"bottom_text": bottom_text, "top_text": top_text,
-            "action_line": action, "nearest": nearest}
+        return ("📈 Overweeg (deels) <b>winst nemen</b> — jouw beslissing "
+                "(+ Belgische meerwaarde-timing).")
+    if fired_today:
+        labels, _ = trap_pairs(ladder_state, fired_today)
+        return f"✅ Vandaag koop-signaal: {labels} — zie de KOOPMOMENT-melding."
+    if bottom_tier == "sterke_bodem_confluentie" and nonfired:
+        pairs, _ = trap_pairs(ladder_state, nonfired)
+        return f"🟢 <b>Diepe koopzone</b> — overweeg de resterende trap(pen): {pairs}."
+    nid = nearest_nonfired_trap(ladder_state)
+    if nid is not None:
+        tr = ladder_state[nid]
+        amt = trap_amount(ladder_state, nid)
+        return f"⏳ Afwachten. Dichtstbij: {action_for_trap(nid, tr, row, amt)}."
+    return "✅ Alle ladder-trappen afgehandeld — afwachten."
 
 
 # ---------------------------------------------------------------------------
@@ -335,67 +370,76 @@ def _fmt_top_value(r) -> str:
     return f"{v}"
 
 
-def _signal_lines(results, labels) -> list[str]:
-    out = []
-    for r in results:
-        mark = "✅" if r.triggered else ("➖" if r.available else "⚪")
-        out.append(f"{mark} {labels.get(r.key, r.key)}: "
-                   f"{html.escape(_fmt_value(r) if labels is LABELS_NL else _fmt_top_value(r))}")
-    return out
+def _signals_oneline(results, labels) -> str:
+    trig = [labels.get(r.key, r.key) for r in results if r.triggered]
+    untrig = [labels.get(r.key, r.key) for r in results if r.available and not r.triggered]
+    unavail = [labels.get(r.key, r.key) for r in results if not r.available]
+    groups = []
+    if trig:
+        groups.append("✅ " + ", ".join(trig))
+    if untrig:
+        groups.append("➖ " + ", ".join(untrig))
+    if unavail:
+        groups.append("⚪ " + ", ".join(unavail))
+    return " · ".join(groups) if groups else "—"
+
+
+DIGEST_DISCLAIMER = ("ℹ️ Geen advies. Bedragen en beslissingen zijn van jou; er wordt "
+                     "nooit automatisch gekocht of verkocht.")
 
 
 # ---------------------------------------------------------------------------
-# DIGEST — leads with meaning + action; raw signals last
+# DIGEST — meaning + action first; ladder with € at every trap; signals last
 # ---------------------------------------------------------------------------
 
 def format_digest(today: dict, results: list, top_results: list, cfg: dict,
-                  ladder_state: dict | None) -> str:
-    na = next_action(today, ladder_state, cfg)
+                  ladder_state: dict | None, positions: dict | None = None) -> str:
     total_bottom = len(cfg["indicators"])
     avail = today.get("available_count") or 0
-
+    emoji = today.get("tier_emoji", "")
     dd = today.get("drawdown_from_ath_pct")
-    header = (f"📅 <b>{_date(today.get('captured_date'))}</b> · "
-              f"BTC <b>{_usd(today.get('price_usd'))}</b>"
-              + (f" · −{_pct(dd)} onder ATH" if dd is not None else ""))
+    btier = today.get("tier", "neutraal")
+    ttier = today.get("top_tier", "neutraal")
+
+    header = (f"{emoji} <b>BTC Bodem Radar</b> — {_date(today.get('captured_date'))}\n"
+              f"Prijs: {_usd(today.get('price_usd'))}"
+              + (f" · {_pct(dd)} onder de top" if dd is not None else ""))
 
     lines = [header, "",
              "📊 <b>Stand van zaken</b>",
-             f"Bodem: {na['bottom_text']}",
-             f"Top: {na['top_text']}"]
+             f"• Bodem: {today.get('bottom_score')}/100 — {btier.replace('_', ' ').upper()} "
+             f"({BOTTOM_TIER_PHRASE.get(btier, btier)})",
+             f"• Top: {today.get('top_score')}/100 — {TOP_TIER_PHRASE.get(ttier, ttier)}"]
     if avail < total_bottom:
         lines.append(f"⚠️ On-chain tijdelijk onbeschikbaar — score over {avail}/{total_bottom} signalen.")
 
-    lines += ["", "🎯 <b>Wat moet jij nu doen?</b>", na["action_line"]]
+    lines += ["", "🎯 <b>Wat moet jij nu doen?</b>", next_action(today, ladder_state, cfg)]
 
-    # Jouw ladder (private — budget allowed in Telegram)
-    lines += ["", "🪜 <b>Jouw ladder</b>"]
+    # Jouw ladder (private — budget shown, Telegram only)
+    lines += ["", "🪜 <b>Jouw ladder (privé)</b>"]
     if ladder_state:
         budget = sum(_num(r.get("amount_eur")) or 0 for r in ladder_state.values())
-        lines.append(f"Budget €{_eur(budget)} — jouw beslissing, geen koopopdracht.")
         for tid in sorted(ladder_state):
             tr = ladder_state[tid]
-            fired = tr.get("status") == "fired"
-            icon = "✅" if fired else "⬜"
-            label = tr.get("label", f"Trap {tid}")
             amount = _eur(tr.get("amount_eur"))
-            suffix = ""
-            if fired and tr.get("fired_on_date"):
-                suffix = f" — gevuurd {_date(tr.get('fired_on_date'))}"
-            elif na["nearest"] and na["nearest"]["id"] == tid:
-                suffix = f" — volgende: {na['nearest']['condition']}"
-            lines.append(f"{icon} {label} (€{amount}){suffix}")
+            lines.append(f"{tid}) ~€{amount} — {trap_status_line(tr, today)}")
+        deployed = (positions or {}).get("deployed", 0) or 0
+        remaining = budget - deployed
+        posline = f"Ingezet: €{_eur(deployed)} · Droog kruit: €{_eur(remaining)}"
+        avg = (positions or {}).get("avg_price")
+        if avg:
+            posline += f" · Gem. instap {_usd(avg)}"
+        lines.append(posline)
     else:
         lines.append("nog niet geïnitialiseerd.")
 
-    # Raw signals dump LAST
-    lines += ["", f"📋 <b>Bodemsignalen ({today.get('triggered_count')} van {avail})</b>"]
-    lines += _signal_lines(results, LABELS_NL)
-    lines += ["", f"📋 <b>Topsignalen ({today.get('top_triggered_count')} van "
-              f"{today.get('top_available_count')})</b>"]
-    lines += _signal_lines(top_results, TOP_LABELS_NL)
+    # Signals LAST (compact one-liners)
+    lines += ["", f"🔎 <b>Signalen ({today.get('triggered_count')}/{avail})</b>",
+              _signals_oneline(results, LABELS_NL),
+              f"Top ({today.get('top_triggered_count')}/{today.get('top_available_count')}): "
+              + _signals_oneline(top_results, TOP_LABELS_NL)]
 
-    lines += ["", DISCLAIMER]
+    lines += ["", DIGEST_DISCLAIMER]
     return "\n".join(lines)
 
 
@@ -405,22 +449,26 @@ def format_digest(today: dict, results: list, top_results: list, cfg: dict,
 
 def format_alert(events: list[dict], today: dict, ladder_state: dict | None, cfg: dict) -> str:
     emoji = today.get("tier_emoji", "")
-    header = (f"{emoji} <b>BTC Bodemradar — wijziging</b>\n"
-              f"{_date(today.get('captured_date'))} · {_usd(today.get('price_usd'))}")
+    tier_nl = today.get("tier", "neutraal").replace("_", " ")
+    header = (f"{emoji} <b>BTC Bodem Radar — wijziging</b>\n"
+              f"Prijs {_usd(today.get('price_usd'))} · "
+              f"score {today.get('bottom_score')}/100 ({tier_nl})")
     change = []
     for ev in events:
         if ev["type"] == "tier_change":
             f = (ev.get("from") or "—").replace("_", " ")
             t = (ev.get("to") or "—").replace("_", " ")
-            change.append(f"Tier: {f} → <b>{t}</b>")
+            change.append(f"🔀 Tier: {f} → <b>{t}</b>")
         elif ev["type"] == "score_delta":
-            change.append(f"Score: {ev['from']} → <b>{ev['to']}</b> (Δ{ev['delta']})")
+            change.append(f"📈 Score: {ev['from']} → <b>{ev['to']}</b> (Δ{ev['delta']})")
         elif ev["type"] == "new_signal_triggered":
             names = ", ".join(LABELS_NL.get(s, s) for s in ev["signals"])
-            change.append(f"Nieuw signaal: <b>{names}</b>")
-    na = next_action(today, ladder_state, cfg)
-    return "\n".join([header] + change + ["", f"🎯 <b>Actie:</b> {na['action_line']}",
-                                          "", DISCLAIMER])
+            change.append(f"🔔 Nieuw signaal: <b>{names}</b>")
+        elif ev["type"] == "ladder_event":
+            change.append(f"🪜 {ev['text']}")
+    action = next_action(today, ladder_state, cfg)
+    return "\n".join([header] + change + ["", f"🎯 {action}", "",
+                                          "ℹ️ Geen advies."])
 
 
 # ---------------------------------------------------------------------------

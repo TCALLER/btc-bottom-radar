@@ -74,23 +74,33 @@ triggered)/Σweight(available))`; tiers `neutraal`/`watch`/`verhit`/`sterke_top_
 **alerts only** (tilt toward a top, honest framing, Belgian meerwaarde-timing in mind) — it never
 builds a fixed-euro sell ladder and never says "verkoop".
 
-## Buy ladder (notify-only — never trades)
+## Buy ladder — validation ladder (notify-only — never trades)
 
-A signal-driven buy ladder lives **in Telegram + CLI only** — its budget/plan are personal and have
-**no anon policy** (never exposed on the public dashboard). Config in `config/ladder.json`
-(budget + 3 tranches 30/30/40%). Rules are explicit predicates (no `eval`). When a tranche's rule
-becomes true on a daily run it sends one Dutch "overweeg ~€X inzetten — jouw beslissing, geen
-koopopdracht" alert and marks itself fired (idempotent).
+A signal-driven buy ladder lives **in Telegram + CLI only** — budget/plan are personal, stored in
+`btc.ladder_state`/`btc.positions` with **no anon policy** (never on the public dashboard). Config in
+`config/ladder.json` (budget €10.121, 3 tranches 30/30/40%, `confirm_days`, per-trap
+`confirm_rebound_pct`). Rules are explicit predicates (no `eval`).
+
+**Three-phase state machine** (`pending → armed → fired`): a tranche **arms** when its value rule is
+true, then only **fires** once price rebounds `confirm_rebound_pct%` above its post-arm low for
+`confirm_days` in a row — a fresh low resets the streak (anti-bull-trap), so it confirms a turn
+before signalling a buy. An **uptrend fallback** fires the remaining tranches once price closes above
+the 200-day MA (the deep levels likely won't return that cycle). Every message shows the **€ amount
+at every trap**, every time. It never issues a buy order.
 
 ```bash
-python -m collector.ladder --status                                   # tranche state
-python -m collector.ladder --simulate --score 76                      # which tranches WOULD fire (no DB write)
-python -m collector.ladder --simulate --set mvrv_zscore=0.05 --set fear_greed=8
-python -m collector.ladder --simulate --score 62 --send-test          # also sends a 🧪 SIMULATIE test ping
+python -m collector.ladder --status                              # 3-phase state, € per trap, ingezet/droog kruit
+python -m collector.ladder --preview arm --trap 1 --send-test    # preview ARMEER message (🧪, no DB write)
+python -m collector.ladder --preview fire --trap 2 --send-test   # preview KOOPMOMENT message
+python -m collector.ladder --preview uptrend --send-test         # preview VANGNET message
+python -m collector.ladder --backtest --years 3                  # price-only backtest (honest; no DB write)
+python -m collector.ladder --mark-bought 1 3036 --price 62000 --note "..."   # record a buy (private)
+python -m collector.ladder --positions                           # list buys + totals
 ```
 
-Simulation is **side-effect-free**: it builds a synthetic row from the latest real row + overrides,
-recomputes tiers from config, prints a table, and never touches `btc.ladder_state`.
+`--preview` and `--backtest` are **side-effect-free** (no writes to `btc.ladder_state`/`positions`).
+`--mark-bought` records a realised buy in `btc.positions` and marks a real trap fired
+(`fire_reason='manual'`).
 
 ## Telegram messages (action-led)
 
@@ -100,8 +110,15 @@ its human condition, price level and distance). The **digest** has fixed section
 (date · price · % under ATH), "Stand van zaken", "Wat moet jij nu doen?", "Jouw ladder" (private —
 budget shown only in Telegram), and the ✅/➖/⚪ signal lists last — plus a ⚠️ line when on-chain is
 temporarily unavailable. The **change** message is a short header + the tier/score delta + one
-"🎯 Actie" line. A fired ladder trap sends a "🪜🔔 KOOPMOMENT" message (condition met, amount,
-remaining traps); the top radar sends "📈🔔 TOP-RADAR — let op". None of them is ever a buy/sell order.
+"🎯 Actie" line. A fired ladder trap sends a "🪜🔔 KOOPMOMENT" message; an armed trap a "🟡 BEWAPEND"
+(ARMEER) message; the uptrend fallback a "🚀 VANGNET" message; the top radar "📈🔔 TOP-RADAR — let op".
+None of them is ever a buy/sell order.
+
+**Reduced-noise scheduling:** the GitHub Actions cron stays daily, but the code decides what to send.
+A CHANGE alert goes out only on a meaningful event (tier change, |score Δ| ≥ `score_change_alert_threshold`,
+or a trap armed/fired/uptrend). The FULL digest is sent only on `--digest` or the weekly
+`digest_weekday` (Monday). A quiet, event-free non-digest day writes the row and sends nothing.
+ARMEER/KOOPMOMENT/VANGNET always send when they occur.
 
 ## Database schema
 

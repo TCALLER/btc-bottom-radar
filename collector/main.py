@@ -188,21 +188,57 @@ def run(send_digest: bool) -> int:
     today_view["top_available_count"] = top_score["available_count"]
     today_view["top_triggered_count"] = top_score["triggered_count"]
 
-    # Ladder state for action-oriented messaging (seed missing tranches).
-    ladder_state = ladder_engine.seed_state(client, ladder_engine.load_ladder())
+    # Buy-ladder: evaluate AFTER persist and BEFORE messaging, so the digest's
+    # "Jouw ladder" reflects same-run fires and we know if a ladder event occurred.
+    ladder_events = {"armed": [], "fired": [], "uptrend": False}
+    try:
+        ladder_events = ladder_engine.evaluate(row, client=client)
+    except Exception as exc:  # noqa: BLE001 - ladder must never break the daily run
+        log.error("ladder evaluation failed (non-fatal): %s", exc)
+
+    ladder_state = ladder_engine.fetch_state(client)         # fresh, post-fire
+    positions = ladder_engine.positions_summary(client, ladder_engine.load_ladder()["budget"])
+
+    # --- Reduced-noise scheduling ---------------------------------------------
+    notify = cfg.get("notify", {})
+    score_threshold = notify.get("score_change_alert_threshold", 5)
+    digest_weekday = notify.get("digest_weekday", 0)
+
+    tier_changed = previous is not None and today_view.get("tier") != previous.get("tier")
+    score_delta = abs((today_view.get("bottom_score") or 0) - (previous.get("bottom_score") or 0)) \
+        if previous is not None else 0
+    ladder_event = bool(ladder_events["armed"] or ladder_events["fired"] or ladder_events["uptrend"])
+    meaningful = tier_changed or score_delta >= score_threshold or ladder_event
+
+    is_digest_day = send_digest or (dt.datetime.now(dt.timezone.utc).weekday() == digest_weekday)
 
     if telegram_ok:
-        events = tg.detect_changes(today_view, previous, cfg)
-        if events:
+        # CHANGE alert only on a meaningful event (and only if not already sending
+        # the full digest, which subsumes it).
+        if meaningful and not is_digest_day:
+            events = []
+            if tier_changed:
+                events.append({"type": "tier_change", "from": previous.get("tier"),
+                               "to": today_view.get("tier")})
+            if previous is not None and score_delta >= score_threshold:
+                events.append({"type": "score_delta", "delta": score_delta,
+                               "from": previous.get("bottom_score"),
+                               "to": today_view.get("bottom_score")})
+            if ladder_events["armed"]:
+                events.append({"type": "ladder_event",
+                               "text": f"trap {ladder_events['armed']} bewapend"})
+            if ladder_events["fired"]:
+                reason = "uptrend" if ladder_events["uptrend"] else "bevestigd"
+                events.append({"type": "ladder_event",
+                               "text": f"trap {sorted(set(ladder_events['fired']))} koop-signaal ({reason})"})
             msg = tg.format_alert(events, today_view, ladder_state, cfg)
             if tg.send_message(msg):
                 db.insert_alert(client, {
                     "alert_type": "change", "tier": score["tier"],
                     "bottom_score": score["bottom_score"], "message": msg,
-                    "payload": {"events": events}, "delivered": True,
-                })
+                    "payload": {"events": events}, "delivered": True})
 
-        # Top-radar alert on tier change / new strong top signal.
+        # Top-radar alert on top-tier change / new strong top signal (always meaningful).
         top_events = tg.detect_top_changes(today_view, previous)
         if top_events:
             tmsg = tg.format_top_alert(top_events, today_view)
@@ -210,28 +246,20 @@ def run(send_digest: bool) -> int:
                 db.insert_alert(client, {
                     "alert_type": "top_change", "tier": top_score["top_tier"],
                     "bottom_score": top_score["top_score"], "message": tmsg,
-                    "payload": {"events": top_events}, "delivered": True,
-                })
+                    "payload": {"events": top_events}, "delivered": True})
 
-    # Buy-ladder: evaluate AFTER persist and BEFORE the digest, so the digest's
-    # "Jouw ladder" section reflects any tranche that fired this run (notify-only,
-    # idempotent). Never lets a ladder error break the daily run.
-    try:
-        ladder_engine.evaluate(row, client=client)
-    except Exception as exc:  # noqa: BLE001
-        log.error("ladder evaluation failed (non-fatal): %s", exc)
-
-    if telegram_ok and send_digest:
-        ladder_state = ladder_engine.fetch_state(client)  # fresh, post-fire
-        digest = tg.format_digest(today_view, results, top_results, cfg, ladder_state)
-        delivered = tg.send_message(digest)
-        db.insert_alert(client, {
-            "alert_type": "digest", "tier": score["tier"],
-            "bottom_score": score["bottom_score"], "message": digest,
-            "payload": {"signals_triggered": score["signals_triggered"],
-                        "top_signals_triggered": top_score["top_signals_triggered"]},
-            "delivered": delivered,
-        })
+        # FULL digest only on the weekly digest day or when forced with --digest.
+        if is_digest_day:
+            digest = tg.format_digest(today_view, results, top_results, cfg, ladder_state, positions)
+            delivered = tg.send_message(digest)
+            db.insert_alert(client, {
+                "alert_type": "digest", "tier": score["tier"],
+                "bottom_score": score["bottom_score"], "message": digest,
+                "payload": {"signals_triggered": score["signals_triggered"],
+                            "top_signals_triggered": top_score["top_signals_triggered"]},
+                "delivered": delivered})
+        elif not meaningful:
+            log.info("quiet day — row written, no meaningful event, not digest day; nothing sent.")
 
     log.info("done. row id=%s date=%s", saved.get("id"), saved.get("captured_date"))
     return 0

@@ -298,3 +298,61 @@ F&G ≤10, of −75% ($Z=0.25·ath), of MVRV-Z ≤0,1`.
 - `python -m collector.main --digest` → real digest delivered. Today: **bottom_score 38 (watch,
   3/9)**, **top_score 0 (neutraal, 0/7)**, BTC ~$62.6k, −50,3% onder ATH; nearest buy = Trap 1
   (koers < 200w-MA $62.596, nog ~$7 te zakken).
+
+---
+
+# Validation ladder + backtest + positions + reduced-noise (2026-06-18)
+
+## Part 1/2 — config + schema
+- `config/ladder.json`: `confirm_days:2`, `uptrend_rule:price_above_sma200d`, tranches with
+  `value_rule` + `confirm_rebound_pct` (3/5/8%). `notify` block in `thresholds.json`
+  (`digest_weekday:0` = Monday, `score_change_alert_threshold:5`).
+- `btc.ladder_state` gained arm/confirm columns (confirm_rebound_pct, confirm_days, armed_at,
+  armed_on_date, armed_price_usd, low_since_arm_usd, confirm_streak, fire_reason). New private
+  `btc.positions` table (RLS on, **no anon policy**). `db/schema.sql` synced (canonical).
+
+## Part 3 — 3-phase state machine (`collector/ladder.py evaluate()`)
+`pending → armed → fired`. A tranche **arms** when its `value_rule` is true (records armed price +
+`low_since_arm`). While **armed**: a fresh low resets `confirm_streak` (anti-bull-trap); once price
+holds `≥ low×(1+rebound%)` for `confirm_days` in a row it **fires** (`fire_reason='confirmed'`).
+**Uptrend fallback** (fire-once): when `price > sma_200d` and ≥1 tranche is not fired, all remaining
+fire with `fire_reason='uptrend'` and ONE 🚀 VANGNET message. Idempotent. Runs after persist, before
+messaging. Returns `{armed,fired,uptrend}` for scheduling.
+
+## Part 4 — action-led messages, € at EVERY trap
+Plain tier text (watch="we naderen, nog niet in de koopzone", naderend="dicht bij de koopzone",
+sterke_bodem_confluentie="diepe koopzone"; top neutraal="geen verkoopsignaal",
+verhit/sterke_top="condities kantelen richting een top"). Digest sections: header (DD/MM/YYYY +
+prijs + % onder de top) → Stand van zaken → Wat moet jij nu doen? → Jouw ladder (privé; budget +
+per-trap € + status line: pending "wacht op niveau (…)", armed "BEWAPEND op $X, koop > $thr",
+fired "KOOP-SIGNAAL date (reason)") + Ingezet/Droog kruit/Gem. instap → Signalen (✅/➖/⚪) →
+disclaimer. ⚠️ line when `available < total`. ARMEER/KOOPMOMENT/VANGNET/TOP messages per spec.
+
+## Part 5 — backtest (`--backtest [--years N]`, price-only, HONEST)
+Runs the SAME arm→rebound→fire→uptrend logic over Kraken daily closes using ONLY price signals
+(on-chain + F&G treated unavailable; score renormalized like live). Disclaimer top + bottom.
+3y run today: window starts above the 200-day MA → uptrend fallback fires all 3 at ~$96.560 day-0
+(faithful — price-only history can't arm the deep levels); summary compares avg instap vs day-1 and
+vs window low ($60.856, +58.7%). No DB writes.
+
+## Part 6 — positions (private)
+`--mark-bought <trap|0> <eur> [--price] [--note]` inserts into `btc.positions` (and marks a real
+trap fired, `fire_reason='manual'`); `--positions` lists with totals; `--status` shows Ingezet /
+Droog kruit / Gem. instap. Verified €100@$62.000 → Ingezet €100, Droog kruit €10.021; test row
+deleted, `--positions` back to empty.
+
+## Part 7 — reduced-noise scheduling (`collector/main.py`)
+Always computes indicators + runs the ladder + writes the row. Sends a CHANGE alert only on a
+meaningful event (tier change, |score Δ| ≥ 5, or a trap armed/fired/uptrend) and only when it isn't
+already a digest day. Sends the FULL digest only on `--digest` or weekday == `digest_weekday`
+(weekly Monday). Quiet non-event non-digest day → nothing sent (row still written). ARMEER/
+KOOPMOMENT/VANGNET always send. GH Actions cron stays daily; the code decides what to send.
+
+## Part 8 — verification
+- `--status`, `--preview arm|fire|uptrend --send-test` (all 3 🧪 pings delivered=true, € shown),
+  `--backtest --years 3`, `--mark-bought`+`--positions`+cleanup, `--digest` (real, delivered=true),
+  `--status` again unchanged (previews/backtest side-effect-free).
+- **Supabase security advisor: NO ERROR** (only INFO `rls_enabled_no_policy` on the 3 private
+  tables — intended deny-all-to-anon). `has_table_privilege(anon, SELECT)` = false for
+  `alerts/ladder_state/positions`, true only for `indicators/latest`.
+- Today: **bottom_score 38 (watch, 3/9)**, **top_score 0 (neutraal, 0/7)**, BTC ~$62.8k.
