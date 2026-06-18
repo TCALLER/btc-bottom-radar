@@ -30,3 +30,4 @@ Thumbs.db
 # stray shell artifacts (accidental redirect/brace output)
 8}
 str
+.webhook_secret.tmp

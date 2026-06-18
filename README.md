@@ -120,6 +120,25 @@ or a trap armed/fired/uptrend). The FULL digest is sent only on `--digest` or th
 `digest_weekday` (Monday). A quiet, event-free non-digest day writes the row and sends nothing.
 ARMEER/KOOPMOMENT/VANGNET always send when they occur.
 
+## Interactive Telegram bot (read-only)
+
+A Supabase Edge Function (`supabase/functions/telegram-bot/index.ts`) lets the owner query state by
+typing commands. It is **read-only** — it reads the `btc` tables and replies; it never trades.
+
+Commands (Dutch, € shown at every trap): `/help`, `/radar` (price, bottom & top score, nearest
+non-fired trap), `/ladder` (private — per-trap status + €, ingezet/droog kruit/gem. instap),
+`/positions` (recorded buys + totals), `/digest` (the last stored digest).
+
+**Locked down:** the webhook verifies the `x-telegram-bot-api-secret-token` header against a secret
+(else 401) and only acts on the owner's `chat.id` (any other chat is silently ignored with 200).
+Secrets live in the Edge Function env (never in the repo); deployed `verify_jwt=false` because the
+secret header + chat allowlist are the gate. Endpoint:
+`https://ajunjsegdeyqjtjllnxg.supabase.co/functions/v1/telegram-bot`.
+
+> Note: a Telegram bot can be either webhooked **or** long-polled, not both. If @flowgenius_bot is
+> also used by another poller, give the radar bot its own BotFather token (set it as the function's
+> `TELEGRAM_BOT_TOKEN`) and re-run `setWebhook`. See `DECISIONS.md`.
+
 ## Database schema
 
 `db/schema.sql` is the canonical, idempotent source-of-truth for the `btc` schema (tables, RLS,

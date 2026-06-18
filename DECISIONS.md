@@ -356,3 +356,38 @@ KOOPMOMENT/VANGNET always send. GH Actions cron stays daily; the code decides wh
   tables — intended deny-all-to-anon). `has_table_privilege(anon, SELECT)` = false for
   `alerts/ladder_state/positions`, true only for `indicators/latest`.
 - Today: **bottom_score 38 (watch, 3/9)**, **top_score 0 (neutraal, 0/7)**, BTC ~$62.8k.
+
+---
+
+# Interactive Telegram bot — Edge Function webhook (2026-06-18)
+
+Added a **read-only** interactive listener: a Supabase Edge Function `telegram-bot` on the dedicated
+BTC project (`ajunjsegdeyqjtjllnxg`). NOTIFY-ONLY — it only reads `btc` tables and replies; never
+trades. Commands (Dutch, € shown at every trap): `/help`, `/radar`, `/ladder`, `/positions`,
+`/digest`.
+
+**Security model (all three enforced, verified):**
+1. Header `x-telegram-bot-api-secret-token` must equal `TELEGRAM_WEBHOOK_SECRET` → else **401**
+   (verified: POST without header → 401).
+2. Only acts on `chat.id == ALLOWED_CHAT_ID` (1277494397); any other chat → **200, silent**
+   (verified: POST with chat 999999 → 200, no reply).
+3. Secrets live in Edge Function env (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+   `ALLOWED_CHAT_ID`) + auto-injected `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` (service role reads
+   the private btc tables). Nothing secret is committed. Deployed with `verify_jwt=false` (public) —
+   the gate is the secret header + chat allowlist, not Supabase JWT.
+
+Function URL: `https://ajunjsegdeyqjtjllnxg.supabase.co/functions/v1/telegram-bot`. Tested by POSTing
+the exact updates Telegram sends (correct secret + owner chat) → 200 and real replies delivered to
+the owner; `/radar` and `/ladder` render correctly with € amounts.
+
+**⚠️ Shared-bot conflict (webhook delivery blocked):** @flowgenius_bot (the collector's bot) is also
+long-polled by the local Claude Code Telegram channel (a `bun` process, PID 35108, in
+`~/.claude/channels/telegram/`). A Telegram bot can have **either** a webhook **or** `getUpdates`
+polling — not both. The poller calls `deleteWebhook` each cycle, so `setWebhook` succeeds but
+`getWebhookInfo.url` is cleared within ~ms. The Edge Function works (proven via direct POST); only
+Telegram→function delivery is blocked while that poller runs. **Resolution (human decision):**
+either (A) use a dedicated second bot token for the radar bot (create via BotFather; set it as the
+function's `TELEGRAM_BOT_TOKEN` and re-run `setWebhook`) — both coexist; or (B) stop the Claude
+Telegram channel poller and dedicate @flowgenius_bot to the webhook (loses the Claude DM bridge).
+Option A is recommended (stable). Everything else is deployed and ready; the bot goes live the moment
+a non-polled token backs the webhook.
