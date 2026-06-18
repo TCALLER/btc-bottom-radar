@@ -254,3 +254,11 @@ fire was created. `btc.alerts` for the 18:12 run shows only `change` + `digest` 
 ## Today's reading (2026-06-18, project ajunjsegdeyqjtjllnxg)
 **bottom_score = 38 (watch, 3/9: pi_cycle_bottom, sopr, supply_profit_pct)** ·
 **top_score = 0 (neutraal, 0/7)** · price ~$62.6k.
+
+## Post-verify fixes
+- **`btc.latest` view rebuilt.** It had been created with `select *` before the top columns were
+  added, so PostgREST returned `column latest.top_score does not exist` for the dashboard's gauge
+  query. Recreated `create or replace view btc.latest as select *` (re-expands `*`) + re-granted
+  anon select; anon read of `btc.latest` now returns `top_score/top_tier/rsi_14w/nupl/puell_multiple`.
+- **Privacy re-verified:** anon `GET /rest/v1/ladder_state` → `42501 permission denied` (no anon
+  policy/grant). The ladder/budget is not reachable with the public key.
