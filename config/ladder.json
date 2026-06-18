@@ -1,6 +1,10 @@
-{ "asset":"BTC", "currency":"EUR", "budget":10121,
+{
+  "asset":"BTC","currency":"EUR","budget":10121,
+  "confirm_days":2,
+  "uptrend_rule":"price_above_sma200d",
   "tranches":[
-    {"id":1,"label":"Trap 1 — naderend + 200w-MA aangeraakt","pct":30,"rule":"tier_naderend_and_ma200w"},
-    {"id":2,"label":"Trap 2 — score >= 60","pct":30,"rule":"score_gte_60"},
-    {"id":3,"label":"Trap 3 — sterke confluentie of capitulatie","pct":40,"rule":"score_gte_75_or_capitulation"}
-  ] }
+    {"id":1,"label":"Trap 1 — 200w-MA","pct":30,"value_rule":"tier_naderend_and_ma200w","confirm_rebound_pct":3},
+    {"id":2,"label":"Trap 2 — score>=60","pct":30,"value_rule":"score_gte_60","confirm_rebound_pct":5},
+    {"id":3,"label":"Trap 3 — capitulatie","pct":40,"value_rule":"score_gte_75_or_capitulation","confirm_rebound_pct":8}
+  ]
+}

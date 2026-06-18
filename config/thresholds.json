@@ -37,5 +37,6 @@
   "alerting": {"telegram":true,"alert_on":["new_signal_triggered","tier_change","score_delta_gte_10"],
     "score_delta_threshold":10,"dedupe":"compare_to_last_snapshot","daily_digest":true,
     "timezone":"Europe/Brussels","language":"nl"},
+  "notify": {"digest_weekday":0,"score_change_alert_threshold":5},
   "meta": {"all_time_high_usd":126000,"ath_date":"2025-10","reference_date":"2026-06-18","reference_price_usd":63958}
 }
