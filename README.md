@@ -28,10 +28,16 @@ dashboard/  ──► reads btc.latest + btc.indicators via anon key (RLS: selec
 
 ## Indicators (config/thresholds.json)
 
-Price/sentiment (always on): Pi-Cycle Bottom (EMA150<SMA471), 200-week MA, Mayer Multiple (<0.8),
-RSI(14) daily (<30), drawdown from ATH (≥75%), Fear & Greed (≤10). On-chain (now live via
-bitcoin-data.com free tier; excluded from the score only if a fetch fails): MVRV Z-Score (≤0.1),
-SOPR (<1.0), supply-in-profit % (≤55).
+Recalibrated for the **diminishing-extremity regime** (bottoms get less extreme each cycle): lean on
+the self-normalizing MVRV-Z, down-weight fuzzy signals, set fixed-extremity thresholds to the modern
+bottom. Weights (relative): MVRV-Z 22, 200-week MA 18, supply-in-profit 15, Mayer 12, Pi-Cycle Bottom
+12, Fear&Greed 10, drawdown 8, SOPR 8, RSI(14) 6. Bottom thresholds: Pi-Cycle Bottom (EMA150<SMA471),
+200-week MA (price≤MA), **Mayer < 0.70**, RSI(14) < 30, **drawdown ≥ 65%**, Fear&Greed ≤10, MVRV-Z
+≤0.1, SOPR <1.0, supply-in-profit ≤55. Top radar thresholds were lowered (peaks compress each cycle).
+
+> ⚠️ All fixed-extremity threshold values are **calibration from approximate historical readings —
+> analytical, not proven**, and (for on-chain/sentiment) not backtestable for lack of a free
+> historical series. See `DECISIONS.md` and the config `_caveat` notes.
 
 Score = `round(100 * Σ weight(available & triggered) / Σ weight(available))`. Tiers: `neutraal` ⚪,
 `watch` 🟡, `naderend` 🟠, `sterke_bodem_confluentie` 🔴.
@@ -93,7 +99,7 @@ python -m collector.ladder --status                              # 3-phase state
 python -m collector.ladder --preview arm --trap 1 --send-test    # preview ARMEER message (🧪, no DB write)
 python -m collector.ladder --preview fire --trap 2 --send-test   # preview KOOPMOMENT message
 python -m collector.ladder --preview uptrend --send-test         # preview VANGNET message
-python -m collector.ladder --backtest --years 3                  # price-only backtest (honest; no DB write)
+python -m collector.ladder --backtest                            # full-history price-only backtest (no DB write)
 python -m collector.ladder --mark-bought 1 3036 --price 62000 --note "..."   # record a buy (private)
 python -m collector.ladder --positions                           # list buys + totals
 ```

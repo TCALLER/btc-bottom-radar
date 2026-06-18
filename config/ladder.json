@@ -2,9 +2,10 @@
   "asset":"BTC","currency":"EUR","budget":10121,
   "confirm_days":2,
   "uptrend_rule":"price_above_sma200d",
+  "_calibration_note":"Levels expressed as multiples of sma_200d so they auto-track the MA. Multiples are calibration from approximate historical bottoms — not proven, not backtested for on-chain triggers.",
   "tranches":[
-    {"id":1,"label":"Trap 1 — 200w-MA","pct":30,"value_rule":"tier_naderend_and_ma200w","confirm_rebound_pct":3},
-    {"id":2,"label":"Trap 2 — score>=60","pct":30,"value_rule":"score_gte_60","confirm_rebound_pct":5},
-    {"id":3,"label":"Trap 3 — capitulatie","pct":40,"value_rule":"score_gte_75_or_capitulation","confirm_rebound_pct":8}
+    {"id":1,"label":"Trap 1 — 200w-MA","pct":30,"value_rule":"ma200w_and_tier_naderend","confirm_rebound_pct":3},
+    {"id":2,"label":"Trap 2 — Mayer 0,7","pct":30,"value_rule":"mayer070_or_score62","confirm_rebound_pct":5},
+    {"id":3,"label":"Trap 3 — capitulatie","pct":40,"value_rule":"mayer050_or_mvrv_or_fg","confirm_rebound_pct":8}
   ]
 }

@@ -181,27 +181,28 @@ def _date(iso: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 def _trap_level(trap_id: int, row: dict) -> float | None:
-    """Indicative price level at which the trap's condition would be met."""
+    """Indicative price level at which the trap's condition would be met.
+    Levels are multiples of sma_200d so they auto-track the moving average."""
+    s = _num(row.get("sma_200d"))
     if trap_id == 1:
         return _num(row.get("ma_200w"))
     if trap_id == 2:
-        s = _num(row.get("sma_200d"))
-        return 0.8 * s if s is not None else None
+        return 0.70 * s if s is not None else None
     if trap_id == 3:
-        a = _num(row.get("all_time_high_usd"))
-        return 0.25 * a if a is not None else None
+        return 0.50 * s if s is not None else None
     return None
 
 
 def trap_condition_text(trap_id: int, row: dict) -> str:
     lvl = _trap_level(trap_id, row)
     if trap_id == 1:
-        return f"koers &lt; 200w-MA ({_usd(lvl)})" if lvl else "koers &lt; 200w-MA"
+        return f"koers ≤ 200w-MA ({_usd(lvl)})" if lvl else "koers ≤ 200w-MA"
     if trap_id == 2:
-        return f"bodemscore ≥ 60 (~ koers &lt; {_usd(lvl)})" if lvl else "bodemscore ≥ 60"
+        base = f"koers ≤ 0,70·SMA200d ({_usd(lvl)})" if lvl else "koers ≤ 0,70·SMA200d"
+        return f"{base}, of bodemscore ≥ 62"
     if trap_id == 3:
-        z = f" ({_usd(lvl)})" if lvl else ""
-        return f"capitulatie: Fear&amp;Greed ≤ 10, of −75%{z}, of MVRV-Z ≤ 0,1"
+        base = f"koers ≤ 0,50·SMA200d ({_usd(lvl)})" if lvl else "koers ≤ 0,50·SMA200d"
+        return f"capitulatie: {base}, of MVRV-Z ≤ 0,1, of Fear&amp;Greed ≤ 10"
     return ""
 
 
@@ -236,17 +237,16 @@ def action_for_trap(tid: int, tr: dict, row: dict, amount: float | None) -> str:
     if tr.get("status") == "armed":
         return (f"Trap {tid} (~€{a}) zodra koers &gt; {_usd(trap_threshold(tr))} "
                 f"(bevestiging, {confirm_days}d)")
+    s = _num(row.get("sma_200d"))
     if tid == 1:
-        return f"Trap 1 (~€{a}) zodra koers &lt; {_usd(row.get('ma_200w'))}"
+        return f"Trap 1 (~€{a}) zodra koers ≤ 200w-MA ({_usd(row.get('ma_200w'))})"
     if tid == 2:
-        s = _num(row.get("sma_200d"))
-        y = 0.8 * s if s is not None else None
-        return f"Trap 2 (~€{a}) zodra bodemscore ≥ 60 (~ koers &lt; {_usd(y)})"
+        y = 0.70 * s if s is not None else None
+        return f"Trap 2 (~€{a}) zodra koers ≤ 0,70·SMA200d ({_usd(y)}) of score ≥ 62"
     if tid == 3:
-        a3 = _num(row.get("all_time_high_usd"))
-        z = 0.25 * a3 if a3 is not None else None
-        return (f"Trap 3 (~€{a}) bij capitulatie "
-                f"(Fear&amp;Greed ≤ 10, of −75% {_usd(z)}, of MVRV-Z ≤ 0,1)")
+        z = 0.50 * s if s is not None else None
+        return (f"Trap 3 (~€{a}) bij capitulatie: koers ≤ 0,50·SMA200d ({_usd(z)}), "
+                f"of MVRV-Z ≤ 0,1, of Fear&amp;Greed ≤ 10")
     return f"Trap {tid} (~€{a})"
 
 
@@ -271,24 +271,26 @@ def trap_pairs(ladder_state: dict, ids: list[int]) -> tuple[str, float]:
 def trap_reason_text(trap_id: int, row: dict) -> str:
     """Why the trap fired, in human language (for the ladder-fire message)."""
     price = _num(row.get("price_usd"))
+    sma = _num(row.get("sma_200d"))
     if trap_id == 1:
         return f"koers {_usd(price)} ≤ 200w-MA {_usd(row.get('ma_200w'))}"
     if trap_id == 2:
-        return f"bodemscore {row.get('bottom_score')} ≥ 60"
+        parts = []
+        if price is not None and sma is not None and price <= 0.70 * sma:
+            parts.append(f"koers {_usd(price)} ≤ 0,70·SMA200d {_usd(0.70 * sma)}")
+        if (row.get("bottom_score") or 0) >= 62:
+            parts.append(f"bodemscore {row.get('bottom_score')} ≥ 62")
+        return " + ".join(parts) if parts else "Trap 2-voorwaarde vervuld"
     if trap_id == 3:
         parts = []
         fg = row.get("fear_greed")
-        dd = _num(row.get("drawdown_from_ath_pct"))
         mvrv = _num(row.get("mvrv_zscore"))
-        score = row.get("bottom_score") or 0
-        if fg is not None and fg <= 10:
-            parts.append(f"Fear&amp;Greed {fg} ≤ 10")
-        if dd is not None and dd >= 75:
-            parts.append(f"−{_pct(dd)} ≤ −75%")
+        if price is not None and sma is not None and price <= 0.50 * sma:
+            parts.append(f"koers {_usd(price)} ≤ 0,50·SMA200d {_usd(0.50 * sma)}")
         if mvrv is not None and mvrv <= 0.1:
             parts.append(f"MVRV-Z {mvrv} ≤ 0,1")
-        if score >= 75:
-            parts.append(f"bodemscore {score} ≥ 75")
+        if fg is not None and fg <= 10:
+            parts.append(f"Fear&amp;Greed {fg} ≤ 10")
         return " + ".join(parts) if parts else "capitulatievoorwaarde vervuld"
     return ""
 

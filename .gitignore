@@ -31,3 +31,6 @@ Thumbs.db
 8}
 str
 .webhook_secret.tmp
+
+.thresholds_old.tmp
+.ladder_old.tmp

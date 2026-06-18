@@ -87,14 +87,13 @@ function nearestTrap(ladder: any[]): any | null {
   return open.length ? open[0] : null;
 }
 function trapCondition(tid: number, row: any): string {
-  if (tid === 1) return `koers &lt; 200w-MA (${usd(row.ma_200w)})`;
+  const s = num(row.sma_200d);
+  if (tid === 1) return `koers ≤ 200w-MA (${usd(row.ma_200w)})`;
   if (tid === 2) {
-    const s = num(row.sma_200d);
-    return `bodemscore ≥ 60 (~ koers &lt; ${usd(s !== null ? 0.8 * s : null)})`;
+    return `koers ≤ 0,70·SMA200d (${usd(s !== null ? 0.7 * s : null)}), of bodemscore ≥ 62`;
   }
   if (tid === 3) {
-    const a = num(row.all_time_high_usd);
-    return `capitulatie (Fear&amp;Greed ≤ 10, of −75% ${usd(a !== null ? 0.25 * a : null)}, of MVRV-Z ≤ 0,1)`;
+    return `capitulatie: koers ≤ 0,50·SMA200d (${usd(s !== null ? 0.5 * s : null)}), of MVRV-Z ≤ 0,1, of F&amp;G ≤ 10`;
   }
   return "";
 }
@@ -218,9 +217,8 @@ async function cmdBtc(): Promise<string> {
   const snap = num(r.price_usd);
   const ma = num(r.ma_200w);
   const sma = num(r.sma_200d);
-  const ath = num(r.all_time_high_usd);
-  const t2 = sma !== null ? 0.8 * sma : null;
-  const t3 = ath !== null ? 0.25 * ath : null;
+  const t2 = sma !== null ? 0.70 * sma : null;  // Trap 2 level (0.70·SMA200d)
+  const t3 = sma !== null ? 0.50 * sma : null;  // Trap 3 level (0.50·SMA200d)
 
   const lines = [`₿ <b>BTC live</b> — ${now}`];
   if (live !== null) {

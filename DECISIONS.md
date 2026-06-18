@@ -403,3 +403,43 @@ polling. No bot token is committed — only code + docs.
 
 ## /btc command — live price (2026-06-18)
 Added a `/btc` command to the Edge Function: fetches the LIVE BTC price from Kraken's public ticker (no key; on failure replies with the daily snapshot + "live koers tijdelijk niet beschikbaar", never faked), reads `btc.latest`, and shows live vs daily snapshot vs the 200w-MA / Trap 2 (0.8·sma_200d) / Trap 3 (0.25·ATH) levels. Read-only; redeployed (verify_jwt=false); `/help` lists it; verified delivered.
+
+---
+
+# Recalibration — diminishing-extremity regime (2026-06-19)
+
+**Rationale:** BTC bottoms get less extreme each cycle (the full-history backtest CONFIRMS this:
+drawdowns −93%/2011 → −85%/2015 → −83%/2018 → −77%/2022 → −51%/2026-ongoing; Mayer-at-bottom
+0.24 → 0.40 → 0.51 → 0.71 → 0.77). So: lean on the self-normalizing metric (MVRV-Z, weight 22),
+down-weight the fuzzy/noisy ones (Pi-Cycle-bottom 18→12, SOPR 12→8), and set fixed-extremity
+thresholds to the MODERN bottom. **All threshold values are calibration from APPROXIMATE historical
+readings — analytical, not proven, not backtested for on-chain/sentiment metrics** (printed as a
+caveat in config `_caveat`/`_calibration_note` and in the backtest disclaimer).
+
+- **Bottom weights** (relative, score normalizes): mvrv_zscore 22, ma_200w 18, supply_profit_pct 15,
+  mayer_multiple 12, pi_cycle_bottom 12, fear_greed 10, drawdown_from_ath_pct 8, sopr 8, rsi_14d 6.
+- **Bottom thresholds changed (2):** `mayer_multiple < 0.70` (was 0.80 — real bottoms ~0.5–0.55;
+  0.80 fired too early), `drawdown_from_ath_pct >= 65` (was 75 — diminishing-drawdown trend). Others
+  unchanged.
+- **Ladder spacing** (budget/percentages/confirm unchanged; levels are multiples of sma_200d so they
+  auto-track): Trap 1 `price ≤ 200w-MA AND tier ≥ naderend`; Trap 2 `price ≤ 0.70·sma_200d OR
+  bottom_score ≥ 62`; Trap 3 `price ≤ 0.50·sma_200d OR mvrv ≤ 0.1 OR fear_greed ≤ 10`. ladder_state
+  rows updated (new labels/rules, kept pending). Uptrend fallback unchanged.
+- **Top radar lowered** (peaks compress each cycle; most uncertain — caveat printed): MVRV-Z 7→5
+  (watch 3.5), Mayer 2.4→2.0 (watch 1.7), weekly RSI 80→75, F&G 90→85, NUPL 0.75→0.65, Puell 4→2.5.
+  Pi-Cycle Top unchanged + dominant (most reliable top signal).
+- **Edge bot + /btc** trap levels aligned to the new spacing (0.70/0.50·sma_200d); redeployed.
+
+**Backtest (Part 4) — honest scope:** full daily history from **blockchain.info** (Kraken OHLC caps
+at ~720 candles and CoinGecko free at 365 days, so neither can give 2010→now; blockchain.info's
+market-price chart provides it). PRICE-ONLY: it CANNOT validate MVRV-Z, SOPR, NUPL, Puell,
+supply-in-profit, Fear&Greed or the Pi-Cycle-bottom trigger — those stay analytically calibrated.
+Section A prints per-cycle bottom stats (date/price/drawdown/Mayer/weeks-below-200w-MA); Section B
+runs the new-spacing ladder per cycle. Honest finding: with the as-is uptrend fallback, in choppy
+bears the remaining traps often fire via the fallback before price reaches the deep Mayer levels, so
+price-only the average entry sits well above the exact bottom — the deep arms in reality lean on the
+on-chain/Mayer signals price-only can't exercise. No DB writes.
+
+**Today old→new:** bottom_score **38 → 32** (both `watch`); no trigger flipped today (Mayer 0.813
+>0.70; drawdown 50.2% <65) — the drop is purely re-weighting. **Advisor: no ERROR**; anon still
+cannot select `alerts`/`ladder_state`/`positions`. No schema change.

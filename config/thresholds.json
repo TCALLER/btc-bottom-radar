@@ -1,14 +1,15 @@
 {
+  "_calibration_note": "Weights/thresholds tuned for the diminishing-extremity regime (bottoms get less extreme each cycle). Threshold values are calibration from APPROXIMATE historical readings — analytical, NOT backtested for on-chain/sentiment metrics. Do not present as proven.",
   "indicators": {
-    "pi_cycle_bottom":        {"weight":18,"source":"price","optional":false,"rule":"cross_below","fast":"EMA150","slow":"SMA471"},
-    "ma_200w":                {"weight":15,"source":"price","optional":false,"rule":"price_below","basis":"SMA200_weekly"},
-    "mayer_multiple":         {"weight":12,"source":"price","optional":false,"rule":"lt","bottom_value":0.8,"basis":"SMA200_daily"},
-    "rsi_14d":                {"weight":8, "source":"price","optional":false,"rule":"lt","bottom_value":30},
-    "drawdown_from_ath_pct":  {"weight":12,"source":"price","optional":false,"rule":"gte","bottom_value":75},
-    "fear_greed":             {"weight":8, "source":"alternative.me","optional":false,"rule":"lte","bottom_value":10,"watch_value":20},
-    "mvrv_zscore":            {"weight":20,"source":"onchain","optional":true,"rule":"lte","bottom_value":0.1,"watch_value":0.5},
-    "sopr":                   {"weight":12,"source":"onchain","optional":true,"rule":"lt_sustained","bottom_value":1.0,"sustained_days":14},
-    "supply_profit_pct":      {"weight":15,"source":"onchain","optional":true,"rule":"lte","bottom_value":55}
+    "mvrv_zscore":            {"weight":22,"source":"onchain","optional":true,"rule":"lte","bottom_value":0.1,"watch_value":0.5},
+    "ma_200w":                {"weight":18,"source":"price","optional":false,"rule":"price_below","basis":"SMA200_weekly"},
+    "supply_profit_pct":      {"weight":15,"source":"onchain","optional":true,"rule":"lte","bottom_value":55},
+    "mayer_multiple":         {"weight":12,"source":"price","optional":false,"rule":"lt","bottom_value":0.70,"basis":"SMA200_daily","_caveat":"was 0.80; real bottoms ~0.5-0.55 (approx historical, not proven)"},
+    "pi_cycle_bottom":        {"weight":12,"source":"price","optional":false,"rule":"cross_below","fast":"EMA150","slow":"SMA471"},
+    "fear_greed":             {"weight":10,"source":"alternative.me","optional":false,"rule":"lte","bottom_value":10,"watch_value":20},
+    "drawdown_from_ath_pct":  {"weight":8, "source":"price","optional":false,"rule":"gte","bottom_value":65,"_caveat":"was 75; diminishing-drawdown trend (approx historical, not proven)"},
+    "sopr":                   {"weight":8, "source":"onchain","optional":true,"rule":"lt_sustained","bottom_value":1.0,"sustained_days":14},
+    "rsi_14d":                {"weight":6, "source":"price","optional":false,"rule":"lt","bottom_value":30}
   },
   "score_tiers": {
     "neutraal":{"min":0,"max":24,"emoji":"⚪"},
@@ -16,14 +17,15 @@
     "naderend":{"min":50,"max":74,"emoji":"🟠"},
     "sterke_bodem_confluentie":{"min":75,"max":100,"emoji":"🔴"}
   },
+  "_top_calibration_note": "Peak readings compress each cycle (e.g. MVRV-Z top 2017 ~9-11 -> 2021 ~3), so thresholds were LOWERED. These are the MOST uncertain values — approx historical, not proven, not backtested. Pi-Cycle Top kept unchanged + dominant (most reliable).",
   "top_indicators": {
     "pi_cycle_top":    {"weight":20,"source":"price","optional":false,"rule":"sma_cross_above","fast":"SMA111","slow":"SMA350","factor":2.0},
-    "mvrv_zscore_high":{"weight":18,"source":"onchain","optional":true,"rule":"gte","top_value":7,"reuses":"mvrv_zscore"},
-    "mayer_high":      {"weight":14,"source":"price","optional":false,"rule":"gt","top_value":2.4,"basis":"SMA200_daily"},
-    "rsi_14w_high":    {"weight":10,"source":"price","optional":false,"rule":"gt","top_value":80},
-    "fear_greed_high": {"weight":8, "source":"alternative.me","optional":false,"rule":"gte","top_value":90},
-    "nupl":            {"weight":16,"source":"onchain","optional":true,"rule":"gt","top_value":0.75},
-    "puell_multiple":  {"weight":14,"source":"onchain","optional":true,"rule":"gt","top_value":4}
+    "mvrv_zscore_high":{"weight":18,"source":"onchain","optional":true,"rule":"gte","top_value":5,"watch_value":3.5,"reuses":"mvrv_zscore","_caveat":"was 7 (approx, not proven)"},
+    "mayer_high":      {"weight":14,"source":"price","optional":false,"rule":"gt","top_value":2.0,"watch_value":1.7,"basis":"SMA200_daily","_caveat":"was 2.4 (approx, not proven)"},
+    "rsi_14w_high":    {"weight":10,"source":"price","optional":false,"rule":"gt","top_value":75,"_caveat":"was 80 (approx, not proven)"},
+    "fear_greed_high": {"weight":8, "source":"alternative.me","optional":false,"rule":"gte","top_value":85,"_caveat":"was 90 (approx, not proven)"},
+    "nupl":            {"weight":16,"source":"onchain","optional":true,"rule":"gt","top_value":0.65,"_caveat":"was 0.75 (approx, not proven)"},
+    "puell_multiple":  {"weight":14,"source":"onchain","optional":true,"rule":"gt","top_value":2.5,"_caveat":"was 4 (approx, not proven)"}
   },
   "top_score_tiers": {
     "neutraal":{"min":0,"max":24,"emoji":"⚪"},

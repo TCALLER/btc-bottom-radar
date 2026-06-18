@@ -70,31 +70,43 @@ def _f(v):
         return None
 
 
-def rule_tier_naderend_and_ma200w(row: dict) -> bool:
-    return row.get("tier") == "naderend" and "ma_200w" in (row.get("signals_triggered") or [])
+# Levels are multiples of sma_200d so they auto-track the moving average.
+_NADEREND_PLUS = ("naderend", "sterke_bodem_confluentie")
 
 
-def rule_score_gte_60(row: dict) -> bool:
-    return (row.get("bottom_score") or 0) >= 60
+def rule_ma200w_and_tier_naderend(row: dict) -> bool:
+    """Trap 1: price <= 200w-MA AND tier >= naderend."""
+    price = _f(row.get("price_usd"))
+    ma = _f(row.get("ma_200w"))
+    return bool(price is not None and ma is not None and price <= ma
+                and row.get("tier") in _NADEREND_PLUS)
 
 
-def rule_score_gte_75_or_capitulation(row: dict) -> bool:
-    score = row.get("bottom_score") or 0
+def rule_mayer070_or_score62(row: dict) -> bool:
+    """Trap 2: price <= 0.70*sma_200d  OR  bottom_score >= 62."""
+    price = _f(row.get("price_usd"))
+    sma = _f(row.get("sma_200d"))
+    by_price = price is not None and sma is not None and price <= 0.70 * sma
+    return bool(by_price or (row.get("bottom_score") or 0) >= 62)
+
+
+def rule_mayer050_or_mvrv_or_fg(row: dict) -> bool:
+    """Trap 3: price <= 0.50*sma_200d  OR  mvrv_zscore <= 0.1  OR  fear_greed <= 10."""
+    price = _f(row.get("price_usd"))
+    sma = _f(row.get("sma_200d"))
     mvrv = _f(row.get("mvrv_zscore"))
-    dd = _f(row.get("drawdown_from_ath_pct"))
     fg = row.get("fear_greed")
     return bool(
-        score >= 75
+        (price is not None and sma is not None and price <= 0.50 * sma)
         or (mvrv is not None and mvrv <= 0.1)
-        or (dd is not None and dd >= 75)
         or (fg is not None and fg <= 10)
     )
 
 
 RULES = {
-    "tier_naderend_and_ma200w": rule_tier_naderend_and_ma200w,
-    "score_gte_60": rule_score_gte_60,
-    "score_gte_75_or_capitulation": rule_score_gte_75_or_capitulation,
+    "ma200w_and_tier_naderend": rule_ma200w_and_tier_naderend,
+    "mayer070_or_score62": rule_mayer070_or_score62,
+    "mayer050_or_mvrv_or_fg": rule_mayer050_or_mvrv_or_fg,
 }
 
 
@@ -376,125 +388,224 @@ def preview(kind: str, trap_id: int, send_test: bool) -> int:
 
 
 # --------------------------------------------------------------------------- backtest (price-only)
-_BT_TOP = ("⚠️ Backtest gebruikt enkel prijs-gebaseerde signalen (geen historische on-chain/"
-           "sentiment), dus Trap 2/3-arming is benaderend; het bevestigings-mechanisme (puur "
-           "prijs) wordt wel getrouw getest.")
+_BT_DISCLAIMER = (
+    "⚠️ PRIJS-ONLY BACKTEST. Dit toetst enkel prijs-afgeleide signalen "
+    "(koers, SMA200d, 200w-MA, Mayer, drawdown). Het KAN MVRV-Z, SOPR, NUPL, Puell, "
+    "supply-in-profit, Fear&Greed of de Pi-Cycle-bodem NIET valideren — daar bestaat geen "
+    "gratis historische reeks voor, dus die drempels blijven analytisch gekalibreerd "
+    "(benaderend, niet bewezen), niet gebacktest.")
 
 
-def _price_only_row(closes: list[float], i: int, cfg: dict) -> dict:
-    """Compute the price-only signals + renormalized bottom_score for day i."""
-    window = closes[: i + 1]
+def _fetch_full_history():
+    """Full daily price history. Kraken/CoinGecko free are range-capped (~720d / 365d),
+    so blockchain.info's market-price chart (daily since 2010) is used for full history.
+    Returns (closes, dates) oldest->newest; falls back to Kraken daily closes."""
+    import requests
+    try:
+        r = requests.get("https://api.blockchain.info/charts/market-price",
+                         params={"timespan": "all", "format": "json", "sampled": "false"},
+                         timeout=60, headers={"User-Agent": "btc-bottom-radar/1.0"})
+        vals = [v for v in r.json().get("values", []) if v.get("y", 0) > 0]
+        if len(vals) > 1000:
+            closes = [float(v["y"]) for v in vals]
+            dates = [dt.datetime.utcfromtimestamp(v["x"]).date().isoformat() for v in vals]
+            return closes, dates, "blockchain.info"
+    except Exception as exc:  # noqa: BLE001
+        log.warning("full history fetch failed: %s", exc)
+    from .datasources import fetch_daily_closes
+    closes, _ = fetch_daily_closes("kraken")
+    return closes, [""] * len(closes), "kraken(720d-cap)"
+
+
+def _roll_sma(c, p):
+    out = [None] * len(c); s = 0.0
+    for i, x in enumerate(c):
+        s += x
+        if i >= p:
+            s -= c[i - p]
+        if i >= p - 1:
+            out[i] = s / p
+    return out
+
+
+def _roll_ema(c, p):
+    out = [None] * len(c); k = 2.0 / (p + 1); e = None
+    for i, x in enumerate(c):
+        if i == p - 1:
+            e = sum(c[:p]) / p; out[i] = e
+        elif i >= p:
+            e = x * k + e * (1 - k); out[i] = e
+    return out
+
+
+def _roll_rsi(c, p=14):
+    out = [None] * len(c)
+    if len(c) < p + 1:
+        return out
+    g = sum(max(c[i] - c[i - 1], 0) for i in range(1, p + 1)) / p
+    l = sum(max(c[i - 1] - c[i], 0) for i in range(1, p + 1)) / p
+    out[p] = 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+    for i in range(p + 1, len(c)):
+        d = c[i] - c[i - 1]
+        g = (g * (p - 1) + max(d, 0)) / p
+        l = (l * (p - 1) + max(-d, 0)) / p
+        out[i] = 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+    return out
+
+
+def _precompute(closes):
+    n = len(closes)
+    ath = [None] * n; m = 0.0
+    for i, x in enumerate(closes):
+        m = x if x > m else m
+        ath[i] = m
+    return {"sma200": _roll_sma(closes, 200), "sma471": _roll_sma(closes, 471),
+            "ema150": _roll_ema(closes, 150), "rsi14": _roll_rsi(closes, 14),
+            "ma200w": _roll_sma(closes, 1400), "ath": ath}
+
+
+def _row_at(closes, pc, i, cfg) -> dict:
+    """Price-only signal row + renormalized bottom_score (NEW weights/thresholds) for day i."""
     price = closes[i]
-    sma200 = ta.sma(window, 200)
-    sma471 = ta.sma(window, 471)
-    ema150 = ta.ema(window, 150)
-    rsi14 = ta.rsi(window, 14)
-    ath = max(window)
+    sma200 = pc["sma200"][i]; sma471 = pc["sma471"][i]; ema150 = pc["ema150"][i]
+    rsi14 = pc["rsi14"][i]; ma200w = pc["ma200w"][i]; ath = pc["ath"][i]
     dd = (1 - price / ath) * 100 if ath else None
     mayer = price / sma200 if sma200 else None
-
-    icfg = cfg["indicators"]
-    # availability + trigger for the price-only universe
-    avail_trig = {}  # key -> (available, triggered)
-    avail_trig["pi_cycle_bottom"] = (ema150 is not None and sma471 is not None,
-                                     bool(ema150 is not None and sma471 is not None and ema150 < sma471))
-    avail_trig["mayer_multiple"] = (mayer is not None, bool(mayer is not None and mayer < icfg["mayer_multiple"]["bottom_value"]))
-    avail_trig["rsi_14d"] = (rsi14 is not None, bool(rsi14 is not None and rsi14 < icfg["rsi_14d"]["bottom_value"]))
-    avail_trig["drawdown_from_ath_pct"] = (dd is not None, bool(dd is not None and dd >= icfg["drawdown_from_ath_pct"]["bottom_value"]))
-    # ma_200w / fear_greed / on-chain treated as UNAVAILABLE (no history here)
-
-    possible = earned = 0
-    signals = []
-    for key, (av, tr) in avail_trig.items():
+    ic = cfg["indicators"]
+    at = {  # key -> (available, triggered) for the price-only universe
+        "pi_cycle_bottom": (ema150 is not None and sma471 is not None,
+                            bool(ema150 is not None and sma471 is not None and ema150 < sma471)),
+        "ma_200w": (ma200w is not None, bool(ma200w is not None and price <= ma200w)),
+        "mayer_multiple": (mayer is not None, bool(mayer is not None and mayer < ic["mayer_multiple"]["bottom_value"])),
+        "rsi_14d": (rsi14 is not None, bool(rsi14 is not None and rsi14 < ic["rsi_14d"]["bottom_value"])),
+        "drawdown_from_ath_pct": (dd is not None, bool(dd is not None and dd >= ic["drawdown_from_ath_pct"]["bottom_value"])),
+    }
+    possible = earned = 0; sig = []
+    for key, (av, tr) in at.items():
         if av:
-            w = icfg[key]["weight"]
-            possible += w
+            possible += ic[key]["weight"]
             if tr:
-                earned += w
-                signals.append(key)
+                earned += ic[key]["weight"]; sig.append(key)
     score = round(100 * earned / possible) if possible else 0
-    tier = scoring._tier_for(score, cfg["score_tiers"])
-    return {"price_usd": price, "sma_200d": sma200, "ma_200w": None,
+    return {"price_usd": price, "sma_200d": sma200, "ma_200w": ma200w,
             "drawdown_from_ath_pct": dd, "mvrv_zscore": None, "fear_greed": None,
-            "bottom_score": score, "tier": tier, "signals_triggered": signals}
+            "bottom_score": score, "tier": scoring._tier_for(score, cfg["score_tiers"]),
+            "signals_triggered": sig, "mayer": mayer}
 
 
-def backtest(years: int) -> int:
-    from .datasources import fetch_daily_closes
-    cfg = load_thresholds()
-    ladder = load_ladder()
-    budget = ladder["budget"]
-    closes, src = fetch_daily_closes("kraken")
-    print("\n" + _BT_TOP + "\n")
-    if not closes or len(closes) < 220:
-        print(f"Onvoldoende historische closes ({len(closes)}) — backtest afgebroken.")
-        return 1
+def _detect_cycles(closes, min_dd=50.0):
+    """Return cycle dicts {peak_i,peak,bot_i,bot,rec_i,dd} for drawdowns >= min_dd%."""
+    ath = closes[0]; ath_i = 0; emin = closes[0]; emin_i = 0
+    cycles = []
+    for i in range(1, len(closes)):
+        p = closes[i]
+        if p > ath:
+            dd = (1 - emin / ath) * 100
+            if dd >= min_dd and emin_i > ath_i:
+                cycles.append({"peak_i": ath_i, "peak": ath, "bot_i": emin_i,
+                               "bot": emin, "rec_i": i, "dd": dd})
+            ath = p; ath_i = i; emin = p; emin_i = i
+        elif p < emin:
+            emin = p; emin_i = i
+    dd = (1 - emin / ath) * 100
+    if dd >= min_dd and emin_i > ath_i:
+        cycles.append({"peak_i": ath_i, "peak": ath, "bot_i": emin_i,
+                       "bot": emin, "rec_i": None, "dd": dd, "ongoing": True})
+    return cycles
 
-    start = max(200, len(closes) - years * 365)
-    window_closes = closes[start:]
-    win_low = min(window_closes)
-    day1_price = closes[start]
 
-    # in-memory ladder state
-    st = {t["id"]: {"status": "pending", "low": None, "streak": 0,
-                    "rule": t["value_rule"], "rebound": t["confirm_rebound_pct"],
-                    "pct": t["pct"], "label": t["label"],
-                    "armed_i": None, "fired_i": None, "fire_reason": None,
-                    "armed_price": None, "fired_price": None}
+def _sim_cycle(closes, pc, cfg, ladder, cyc):
+    """Run the new-spacing ladder over one cycle (price-only). Reset pending at bear
+    entry (first close below SMA200d in the episode), run to recovery/end."""
+    end = cyc["rec_i"] if cyc["rec_i"] is not None else len(closes) - 1
+    bear = None
+    for j in range(cyc["peak_i"], end + 1):
+        s = pc["sma200"][j]
+        if s is not None and closes[j] < s:
+            bear = j; break
+    if bear is None:
+        return None
+    budget = ladder["budget"]; cdays = ladder.get("confirm_days", 2)
+    st = {t["id"]: {"status": "pending", "low": None, "streak": 0, "rule": t["value_rule"],
+                    "rebound": t["confirm_rebound_pct"], "pct": t["pct"],
+                    "fired_i": None, "fired_price": None, "reason": None}
           for t in ladder["tranches"]}
-    cdays = ladder.get("confirm_days", 2)
-    buys = []  # (tranche_id, price, reason)
-
-    for i in range(start, len(closes)):
-        row = _price_only_row(closes, i, cfg)
+    for i in range(bear, end + 1):
+        row = _row_at(closes, pc, i, cfg)
         price, sma200 = row["price_usd"], row["sma_200d"]
         for tid in sorted(st):
             tr = st[tid]
             if tr["status"] == "pending":
                 if RULES[tr["rule"]](row):
-                    tr.update(status="armed", low=price, streak=0, armed_i=i, armed_price=price)
+                    tr.update(status="armed", low=price, streak=0)
             elif tr["status"] == "armed":
                 if tr["low"] is None or price <= tr["low"]:
                     tr["low"], tr["streak"] = price, 0
-                threshold = tr["low"] * (1 + tr["rebound"] / 100.0)
-                tr["streak"] = tr["streak"] + 1 if price >= threshold else 0
+                tr["streak"] = tr["streak"] + 1 if price >= tr["low"] * (1 + tr["rebound"] / 100.0) else 0
                 if tr["streak"] >= cdays:
-                    tr.update(status="fired", fired_i=i, fired_price=price, fire_reason="confirmed")
-                    buys.append((tid, price, "confirmed"))
+                    tr.update(status="fired", fired_i=i, fired_price=price, reason="confirmed")
         nonfired = [tid for tid in st if st[tid]["status"] != "fired"]
         if sma200 is not None and price > sma200 and nonfired:
             for tid in nonfired:
-                st[tid].update(status="fired", fired_i=i, fired_price=price, fire_reason="uptrend")
-                buys.append((tid, price, "uptrend"))
+                st[tid].update(status="fired", fired_i=i, fired_price=price, reason="uptrend")
+    fires = [(tid, st[tid]["fired_price"], st[tid]["reason"]) for tid in sorted(st)
+             if st[tid]["status"] == "fired"]
+    wsum = sum(amount_eur(budget, st[tid]["pct"]) for tid, _, _ in fires)
+    avg = (sum(amount_eur(budget, st[tid]["pct"]) * pr for tid, pr, _ in fires) / wsum) if wsum else None
+    return {"bear_price": closes[bear], "fires": fires, "avg": avg, "st": st}
 
-    def dstr(i):
-        return f"day+{i - start}" if i is not None else "—"
 
-    print(f"Window: laatste {years}j → {len(window_closes)} dagen (van index {start}).")
-    print(f"{'trap':<22}{'armed':>10}{'@armed$':>10}{'fired':>10}{'@fired$':>10}  reason")
-    print("-" * 78)
-    for tid in sorted(st):
-        tr = st[tid]
-        print(f"{tr['label'][:20]:<22}{dstr(tr['armed_i']):>10}{_fmt0(tr['armed_price']):>10}"
-              f"{dstr(tr['fired_i']):>10}{_fmt0(tr['fired_price']):>10}  {tr['fire_reason'] or '-'}")
+def backtest(years: int) -> int:
+    cfg = load_thresholds(); ladder = load_ladder()
+    closes, dates, src = _fetch_full_history()
+    print("\n" + _BT_DISCLAIMER + "\n")
+    if not closes or len(closes) < 1500:
+        print(f"Onvoldoende historische closes ({len(closes)}) — backtest afgebroken.")
+        return 1
+    pc = _precompute(closes)
+    cycles = [c for c in _detect_cycles(closes, min_dd=50.0) if c["peak"] >= 100.0]
+    print(f"Bron: {src} · {len(closes)} dagen ({dates[0]} → {dates[-1]}) · "
+          f"{len(cycles)} drawdown-episodes ≥ 50% (piek ≥ $100; sommige zijn mid-cyclus "
+          f"correcties, geen finale bodem).\n")
 
-    # SUMMARY
-    deployed = sum(amount_eur(budget, st[tid]["pct"]) for tid, _, _ in buys)
-    if buys:
-        wsum = sum(amount_eur(budget, st[tid]["pct"]) for tid, _, _ in buys)
-        avg = sum(amount_eur(budget, st[tid]["pct"]) * p for tid, p, _ in buys) / wsum
-    else:
-        avg = None
-    print("\nSAMENVATTING")
-    print(f"  Aankopen: {len(buys)}  ·  Ingezet: €{fmt_eur(deployed)}  ·  "
-          f"Gem. instap: {('$' + _fmt0(avg)) if avg else 'n.v.t.'}")
-    print(f"  Vergelijk: hele budget op dag 1 → ${_fmt0(day1_price)};  "
-          f"laagste close in window → ${_fmt0(win_low)}")
-    if avg:
-        vs_day1 = (day1_price / avg - 1) * 100
-        vs_low = (avg / win_low - 1) * 100
-        print(f"  Gem. instap vs dag-1: {vs_day1:+.1f}%  ·  vs laagste close: {vs_low:+.1f}% hoger")
-    print("\n" + _BT_TOP)
+    # --- A) PER-CYCLE BOTTOM STATS (empirically checks the calibration) ---
+    print("A) CYCLUS-BODEMS (prijs-afgeleid — toetst de kalibratie)")
+    print(f"{'bodem-datum':<13}{'prijs$':>10}{'drawdown':>10}{'Mayer':>8}{'wkn<200wMA':>12}")
+    print("-" * 56)
+    for c in cycles:
+        bi = c["bot_i"]
+        mayer = closes[bi] / pc["sma200"][bi] if pc["sma200"][bi] else None
+        end = c["rec_i"] if c["rec_i"] is not None else len(closes) - 1
+        weeks_below = sum(1 for j in range(c["peak_i"], end + 1)
+                          if pc["ma200w"][j] is not None and closes[j] < pc["ma200w"][j]) / 7.0
+        tag = " (lopend)" if c.get("ongoing") else ""
+        ddtxt = f"-{c['dd']:.0f}%"
+        mtxt = f"{mayer:.2f}" if mayer else "n.b."
+        print(f"{dates[bi]:<13}{_fmt0(closes[bi]):>10}{ddtxt:>10}{mtxt:>8}{weeks_below:>11.0f}{tag}")
+    print("  (Mayer = prijs / SMA200d op de bodem. 'wkn<200wMA' = weken dat de koers in die "
+          "cyclus onder de 200-weken-MA zat.)")
+
+    # --- B) LADDER SIMULATION (new spacing, price-based arms) ---
+    print("\nB) LADDER-SIMULATIE met de NIEUWE spacing (prijs-gebaseerde arming)")
+    print("   per cyclus: gem. instap vs 'alles kopen bij bear-start (<200d-MA)' vs 'exacte bodem'")
+    print("-" * 72)
+    for c in cycles:
+        res = _sim_cycle(closes, pc, cfg, ladder, c)
+        label = dates[c["bot_i"]][:7] + (" (lopend)" if c.get("ongoing") else "")
+        if not res:
+            print(f"{label}: geen bear-fase gedetecteerd."); continue
+        low = c["bot"]; bear = res["bear_price"]; avg = res["avg"]
+        fired = ", ".join(f"T{tid}@{_fmt0(pr)}({rs[:4]})" for tid, pr, rs in res["fires"]) or "geen"
+        if avg:
+            vs_bear = (bear - avg) / bear * 100  # negative => ladder bought lower than bear-start
+            vs_low = (avg / low - 1) * 100
+            print(f"{label}: gem.instap ${_fmt0(avg)} · vs bear-start ${_fmt0(bear)} "
+                  f"({vs_bear:+.0f}%) · vs bodem ${_fmt0(low)} (+{vs_low:.0f}%)")
+        else:
+            print(f"{label}: niets gevuurd · bodem ${_fmt0(low)}")
+        print(f"        gevuurd: {fired}")
+
+    print("\n" + _BT_DISCLAIMER)
     return 0
 
 
