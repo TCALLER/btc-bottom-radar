@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
-import type { IndicatorRow } from "./types";
+import type { IndicatorRow, DerivativesRow } from "./types";
 import Gauge from "./components/Gauge";
 import IndicatorTable, { BOTTOM_KEYS, TOP_KEYS } from "./components/IndicatorTable";
 import ScoreChart from "./components/ScoreChart";
+import FlushCard from "./components/FlushCard";
 
 interface HistPoint {
   captured_date: string;
@@ -14,6 +15,7 @@ interface HistPoint {
 export default function App() {
   const [latest, setLatest] = useState<IndicatorRow | null>(null);
   const [history, setHistory] = useState<HistPoint[]>([]);
+  const [deriv, setDeriv] = useState<DerivativesRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,6 +37,10 @@ export default function App() {
 
         setLatest((latestRows?.[0] as IndicatorRow) ?? null);
         setHistory((hist as HistPoint[]) ?? []);
+
+        // Flush-check is additive: a missing/empty view must not break the page.
+        const { data: dRows } = await supabase.from("latest_derivatives").select("*").limit(1);
+        setDeriv((dRows?.[0] as DerivativesRow) ?? null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -98,6 +104,11 @@ export default function App() {
             <div className="text-xs text-gray-500 ml-auto self-end">
               Laatste meting: {latest.captured_date}
             </div>
+          </section>
+
+          <section className="mb-6">
+            <h2 className="text-lg font-semibold mb-2">Daling: hefboom-flush of spot-verkoop?</h2>
+            <FlushCard row={deriv} />
           </section>
 
           <section className="mb-6">

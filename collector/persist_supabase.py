@@ -47,3 +47,23 @@ def upsert_indicators(client: Client, row: dict) -> dict:
 def insert_alert(client: Client, alert: dict) -> None:
     client.table("alerts").insert(alert).execute()
     log.info("logged alert: %s", alert.get("alert_type"))
+
+
+def upsert_derivatives(client: Client, row: dict) -> dict:
+    """Upsert one derivatives/flush-check row keyed on captured_date."""
+    resp = (
+        client.table("derivatives")
+        .upsert(row, on_conflict="captured_date")
+        .execute()
+    )
+    data = resp.data or []
+    log.info("upserted derivatives row for %s (verdict=%s)",
+             row.get("captured_date"), row.get("flush_verdict"))
+    return data[0] if data else {}
+
+
+def fetch_last_derivatives(client: Client) -> dict | None:
+    resp = (client.table("derivatives").select("*")
+            .order("captured_date", desc=True).limit(1).execute())
+    rows = resp.data or []
+    return rows[0] if rows else None

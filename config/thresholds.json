@@ -40,5 +40,16 @@
     "score_delta_threshold":10,"dedupe":"compare_to_last_snapshot","daily_digest":true,
     "timezone":"Europe/Brussels","language":"nl"},
   "notify": {"digest_weekday":0,"score_change_alert_threshold":5},
+  "derivatives": {
+    "_caveat": "Flush-check is een HEURISTIEK op perp-positionering (OKX, Bybit-fallback). Drempels analytisch gekozen, niet gebacktest. Nooit een koop-/verkoopsignaal.",
+    "price_drop_pct": 2.0,
+    "oi_flush_drop_pct": 4.0,
+    "oi_stable_band_pct": 1.5,
+    "funding_negative": 0.0,
+    "funding_hot": 0.0001,
+    "long_liq_dominance_pct": 65,
+    "okx_ct_val_btc": 0.01,
+    "liq_max_pages": 20
+  },
   "meta": {"all_time_high_usd":126000,"ath_date":"2025-10","reference_date":"2026-06-18","reference_price_usd":63958}
 }

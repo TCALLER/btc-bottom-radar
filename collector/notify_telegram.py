@@ -394,8 +394,30 @@ DIGEST_DISCLAIMER = ("ℹ️ Geen advies. Bedragen en beslissingen zijn van jou;
 # DIGEST — meaning + action first; ladder with € at every trap; signals last
 # ---------------------------------------------------------------------------
 
+def format_flush_section(fv: dict | None) -> list[str]:
+    """'Daling: hefboom of spot?' block. Only speaks when there is something to say;
+    on a quiet day it is one short line."""
+    if not fv:
+        return ["🧹 <b>Daling: hefboom of spot?</b>", "Derivatives-data vandaag niet beschikbaar."]
+    verdict = fv.get("verdict", "onbekend")
+    head = f"{fv.get('emoji', '')} <b>Daling: hefboom of spot?</b>"
+    if verdict == "geen_daling":
+        return [head, f"Geen noemenswaardige daling ({_pct(fv.get('price_chg_24h_pct'))} vs vorig dagslot)."]
+    lines = [head, f"<b>{html.escape(fv.get('label_nl', verdict))}</b>",
+             html.escape(fv.get("meaning_nl", ""), quote=False)]
+    reasons = fv.get("reasons") or []
+    if reasons:
+        lines.append("• " + " · ".join(html.escape(r) for r in reasons))
+    if fv.get("liq_truncated"):
+        lines.append(f"⚠️ Liquidaties slechts {fv.get('liq_covered_hours')}u van 24u gezien (paginalimiet).")
+    if verdict == "onbekend" and fv.get("raw", {}).get("snapshot", {}).get("missing"):
+        lines.append("Ontbreekt: " + ", ".join(fv["raw"]["snapshot"]["missing"]))
+    return lines
+
+
 def format_digest(today: dict, results: list, top_results: list, cfg: dict,
-                  ladder_state: dict | None, positions: dict | None = None) -> str:
+                  ladder_state: dict | None, positions: dict | None = None,
+                  flush_view: dict | None = None) -> str:
     total_bottom = len(cfg["indicators"])
     avail = today.get("available_count") or 0
     emoji = today.get("tier_emoji", "")
@@ -416,6 +438,8 @@ def format_digest(today: dict, results: list, top_results: list, cfg: dict,
         lines.append(f"⚠️ On-chain tijdelijk onbeschikbaar — score over {avail}/{total_bottom} signalen.")
 
     lines += ["", "🎯 <b>Wat moet jij nu doen?</b>", next_action(today, ladder_state, cfg)]
+
+    lines += [""] + format_flush_section(flush_view)
 
     # Jouw ladder (private — budget shown, Telegram only)
     lines += ["", "🪜 <b>Jouw ladder (privé)</b>"]
@@ -449,7 +473,8 @@ def format_digest(today: dict, results: list, top_results: list, cfg: dict,
 # CHANGE — short: header + tier/score change + one 🎯 Actie line
 # ---------------------------------------------------------------------------
 
-def format_alert(events: list[dict], today: dict, ladder_state: dict | None, cfg: dict) -> str:
+def format_alert(events: list[dict], today: dict, ladder_state: dict | None, cfg: dict,
+                 flush_view: dict | None = None) -> str:
     emoji = today.get("tier_emoji", "")
     tier_nl = today.get("tier", "neutraal").replace("_", " ")
     header = (f"{emoji} <b>BTC Bodem Radar — wijziging</b>\n"
@@ -468,9 +493,14 @@ def format_alert(events: list[dict], today: dict, ladder_state: dict | None, cfg
             change.append(f"🔔 Nieuw signaal: <b>{names}</b>")
         elif ev["type"] == "ladder_event":
             change.append(f"🪜 {ev['text']}")
+        elif ev["type"] == "flush" and flush_view:
+            change.append(f"{flush_view.get('emoji', '')} Daling = <b>{html.escape(flush_view.get('label_nl', ''))}</b>")
     action = next_action(today, ladder_state, cfg)
-    return "\n".join([header] + change + ["", f"🎯 {action}", "",
-                                          "ℹ️ Geen advies."])
+    tail = []
+    if flush_view and flush_view.get("verdict") not in (None, "geen_daling", "onbekend"):
+        tail = [html.escape(flush_view.get("meaning_nl", ""), quote=False), ""]
+    return "\n".join([header] + change + ["", f"🎯 {action}", ""] + tail +
+                     ["ℹ️ Geen advies."])
 
 
 # ---------------------------------------------------------------------------
