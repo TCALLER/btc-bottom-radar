@@ -15,6 +15,8 @@ import os
 from . import scoring
 from . import top_radar
 from . import ladder as ladder_engine
+from . import derivatives as deriv
+from . import flush
 from .config import env, load_thresholds, setup_logging
 from .datasources import (
     fetch_daily_closes,
@@ -179,6 +181,36 @@ def run(send_digest: bool) -> int:
     previous = db.fetch_last_snapshot(client)
     saved = db.upsert_indicators(client, row)
 
+    # Flush-check: was today's move a leverage flush or spot selling?
+    # Fetched + persisted separately; a dead derivatives source never breaks
+    # the daily run (verdict 'onbekend', row still written).
+    flush_view: dict | None = None
+    prev_flush: dict | None = None
+    try:
+        prev_flush = db.fetch_last_derivatives(client)
+        snap = deriv.fetch_snapshot(cfg, ctx.price_usd)
+        price_chg = flush.price_change_pct(ctx.daily_closes)
+        verdict = flush.classify(price_chg, snap, cfg)
+        drow = {
+            "captured_date": row["captured_date"], "source": snap["source"],
+            "price_usd": ctx.price_usd, "price_chg_24h_pct": price_chg,
+            "funding_rate": snap["funding_rate"], "premium": snap["premium"],
+            "oi_usd": snap["oi_usd"], "oi_btc": snap["oi_btc"],
+            "oi_usd_24h_ago": snap["oi_usd_24h_ago"], "oi_change_24h_pct": snap["oi_change_24h_pct"],
+            "oi_ref_age_hours": snap["oi_ref_age_hours"],
+            "liq_long_usd": snap["liq_long_usd"], "liq_short_usd": snap["liq_short_usd"],
+            "liq_long_share_pct": snap["liq_long_share_pct"],
+            "liq_covered_hours": snap["liq_covered_hours"], "liq_truncated": snap["liq_truncated"],
+            "liq_source": snap["liq_source"],
+            "flush_verdict": verdict["verdict"],
+            "flush_detail": {k: verdict[k] for k in ("label_nl", "meaning_nl", "reasons", "inputs")},
+            "raw": {"snapshot": snap},
+        }
+        db.upsert_derivatives(client, drow)
+        flush_view = dict(drow); flush_view.update(verdict)
+    except Exception as exc:  # noqa: BLE001 - flush-check must never break the daily run
+        log.error("flush-check failed (non-fatal): %s", exc)
+
     # enrich today's dict with emoji + counts for message formatting
     today_view = dict(row)
     today_view["tier_emoji"] = score["tier_emoji"]
@@ -208,7 +240,12 @@ def run(send_digest: bool) -> int:
     score_delta = abs((today_view.get("bottom_score") or 0) - (previous.get("bottom_score") or 0)) \
         if previous is not None else 0
     ladder_event = bool(ladder_events["armed"] or ladder_events["fired"] or ladder_events["uptrend"])
-    meaningful = tier_changed or score_delta >= score_threshold or ladder_event
+    flush_event = bool(
+        flush_view is not None
+        and flush_view["verdict"] not in ("geen_daling", "onbekend")
+        and (prev_flush is None or prev_flush.get("flush_verdict") != flush_view["verdict"])
+    )
+    meaningful = tier_changed or score_delta >= score_threshold or ladder_event or flush_event
 
     is_digest_day = send_digest or (dt.datetime.now(dt.timezone.utc).weekday() == digest_weekday)
 
@@ -231,7 +268,9 @@ def run(send_digest: bool) -> int:
                 reason = "uptrend" if ladder_events["uptrend"] else "bevestigd"
                 events.append({"type": "ladder_event",
                                "text": f"trap {sorted(set(ladder_events['fired']))} koop-signaal ({reason})"})
-            msg = tg.format_alert(events, today_view, ladder_state, cfg)
+            if flush_event:
+                events.append({"type": "flush", "verdict": flush_view["verdict"]})
+            msg = tg.format_alert(events, today_view, ladder_state, cfg, flush_view)
             if tg.send_message(msg):
                 db.insert_alert(client, {
                     "alert_type": "change", "tier": score["tier"],
@@ -250,7 +289,8 @@ def run(send_digest: bool) -> int:
 
         # FULL digest only on the weekly digest day or when forced with --digest.
         if is_digest_day:
-            digest = tg.format_digest(today_view, results, top_results, cfg, ladder_state, positions)
+            digest = tg.format_digest(today_view, results, top_results, cfg, ladder_state, positions,
+                                      flush_view)
             delivered = tg.send_message(digest)
             db.insert_alert(client, {
                 "alert_type": "digest", "tier": score["tier"],

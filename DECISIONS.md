@@ -443,3 +443,39 @@ on-chain/Mayer signals price-only can't exercise. No DB writes.
 **Today old→new:** bottom_score **38 → 32** (both `watch`); no trigger flipped today (Mayer 0.813
 >0.70; drawdown 50.2% <65) — the drop is purely re-weighting. **Advisor: no ERROR**; anon still
 cannot select `alerts`/`ladder_state`/`positions`. No schema change.
+
+
+---
+
+# Flush-check — hefboom-flush vs spot-verkoop (2026-10-08)
+
+**Why:** on 07/10/2026 BTC fell ~3% on "$650M liquidations" headlines. The radar could say *how
+far from a bottom* but not *who sold* — forced leverage or spot holders. That distinction decides
+whether a drop is likely exhausted (flush) or has follow-through risk (spot-led with leverage
+intact). Built so the answer comes from data in the daily run instead of from news headlines.
+
+- **Sources, verified live on 08/10 (response shapes checked):** OKX `public/funding-rate`,
+  `public/open-interest`, `rubik/stat/contracts/open-interest-volume` (hourly `[ts, oi_usd,
+  vol_usd]`, newest first — observed to lag by up to ~1 day, so the row stores `oi_ref_age_hours`),
+  `public/liquidation-orders` (100/page, `after` cursor, `sz` in contracts × `ctVal` 0.01 BTC ×
+  `bkPx`). Bybit `market/tickers` + `market/open-interest` as fallback (no liquidation feed).
+  **Binance rejected**: 451 for US IPs = GitHub-hosted runners. Coinglass rejected: needs a key.
+- **Liquidation coverage is bounded, not extrapolated:** `liq_max_pages=20` (2.000 orders, OKX
+  limit 5 req/2 s → ~9 s). On a violent day the row carries `liq_truncated=true` and
+  `liq_covered_hours`; Telegram and dashboard show the ⚠️.
+- **Verdict logic is a pure function** (`flush.classify`) over price Δ (last close vs previous
+  daily close), OI Δ24h, funding, long-share of liquidations. Thresholds in config
+  (`price_drop_pct 2`, `oi_flush_drop_pct 4`, `oi_stable_band_pct 1.5`, `funding_hot 0.01%/8h`,
+  `long_liq_dominance_pct 65`) — **analytical calibration, not backtested** (caveat in config,
+  README, dashboard). 11 unit tests incl. a two-page liquidation aggregation fixture.
+- **Storage:** new table `btc.derivatives` (one row per UTC date, anon-readable market data) +
+  view `btc.latest_derivatives` (security_invoker). Schema in `db/schema.sql`; applied to the
+  live project via the Supabase MCP in the same session. `btc.indicators` untouched.
+- **Scheduling:** rides the existing daily run; a flush-check failure is non-fatal (verdict
+  `onbekend`, row still written). A verdict change on a drop day = meaningful → CHANGE alert.
+- **Not built (on purpose):** `/flush` bot command in the Edge Function (next step if wanted),
+  intraday runs (would need a second cron; the daily 07:30 snapshot answers "what happened
+  yesterday", not "what is happening now").
+- **Status:** gebouwd, unit-getest, dashboard-build groen — **nog niet live gedraaid** tegen
+  OKX vanaf GitHub Actions (the cloud build session has no exchange egress). First proof =
+  first `workflow_dispatch` run after merge.

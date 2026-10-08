@@ -48,6 +48,27 @@ alter table btc.indicators
   add column if not exists top_signals_triggered jsonb not null default '[]'::jsonb;
 
 -- ---------------------------------------------------------------------------
+-- Derivatives snapshot + flush-check verdict (one row per UTC date; anon-readable
+-- market data, nothing personal). Answers "hefboom-flush of spot-verkoop?".
+-- ---------------------------------------------------------------------------
+create table if not exists btc.derivatives (
+  id bigint generated always as identity primary key,
+  captured_date date not null unique,
+  captured_at timestamptz not null default now(),
+  source text,
+  price_usd numeric, price_chg_24h_pct numeric,
+  funding_rate numeric, premium numeric,
+  oi_usd numeric, oi_btc numeric, oi_usd_24h_ago numeric, oi_change_24h_pct numeric,
+  oi_ref_age_hours numeric,
+  liq_long_usd numeric, liq_short_usd numeric, liq_long_share_pct numeric,
+  liq_covered_hours numeric, liq_truncated boolean, liq_source text,
+  flush_verdict text not null default 'onbekend',
+  flush_detail jsonb not null default '{}'::jsonb,
+  raw jsonb not null default '{}'::jsonb
+);
+create index if not exists btc_derivatives_date_idx on btc.derivatives (captured_date desc);
+
+-- ---------------------------------------------------------------------------
 -- Alert log (PRIVATE — no anon access)
 -- ---------------------------------------------------------------------------
 create table if not exists btc.alerts (
@@ -98,13 +119,16 @@ create table if not exists btc.positions (
 -- Row-level security
 -- ---------------------------------------------------------------------------
 alter table btc.indicators   enable row level security;
+alter table btc.derivatives  enable row level security;
 alter table btc.alerts       enable row level security;
 alter table btc.ladder_state enable row level security;
 alter table btc.positions    enable row level security;
 
--- Only btc.indicators is anon-readable.
+-- Only btc.indicators and btc.derivatives (market data) are anon-readable.
 drop policy if exists "anon_read_btc_indicators" on btc.indicators;
 create policy "anon_read_btc_indicators" on btc.indicators for select to anon using (true);
+drop policy if exists "anon_read_btc_derivatives" on btc.derivatives;
+create policy "anon_read_btc_derivatives" on btc.derivatives for select to anon using (true);
 -- btc.alerts, btc.ladder_state and btc.positions intentionally have NO anon policy
 -- (personal financial info — never exposed via the public dashboard key).
 
@@ -113,6 +137,7 @@ create policy "anon_read_btc_indicators" on btc.indicators for select to anon us
 -- ---------------------------------------------------------------------------
 grant usage on schema btc to anon;
 grant select on btc.indicators to anon;
+grant select on btc.derivatives to anon;
 
 -- service_role (collector writes) — full access inside the btc schema only.
 grant usage on schema btc to service_role;
@@ -134,3 +159,9 @@ create or replace view btc.latest
   with (security_invoker = true)
   as select * from btc.indicators order by captured_date desc limit 1;
 grant select on btc.latest to anon;
+
+-- Latest derivatives snapshot (same security_invoker + recreate-after-column rule).
+create or replace view btc.latest_derivatives
+  with (security_invoker = true)
+  as select * from btc.derivatives order by captured_date desc limit 1;
+grant select on btc.latest_derivatives to anon;

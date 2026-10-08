@@ -34,3 +34,25 @@ export interface IndicatorRow {
   top_signals_triggered: string[];
   indicators_detail: Record<string, IndicatorDetail>;
 }
+
+export interface DerivativesRow {
+  captured_date: string;
+  source: string | null;
+  price_usd: number | null;
+  price_chg_24h_pct: number | null;
+  funding_rate: number | null;
+  premium: number | null;
+  oi_usd: number | null;
+  oi_btc: number | null;
+  oi_usd_24h_ago: number | null;
+  oi_change_24h_pct: number | null;
+  oi_ref_age_hours: number | null;
+  liq_long_usd: number | null;
+  liq_short_usd: number | null;
+  liq_long_share_pct: number | null;
+  liq_covered_hours: number | null;
+  liq_truncated: boolean | null;
+  liq_source: string | null;
+  flush_verdict: string;
+  flush_detail: Record<string, unknown>;
+}

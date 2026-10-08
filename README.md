@@ -71,6 +71,30 @@ Reads `dashboard/.env.local` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VI
 The dashboard shows **two gauges** — "Bodem" (bottom) and "Top" — plus per-radar indicator tables and
 a dual score-over-time chart. The buy ladder and budget are **never** shown (privacy).
 
+## Flush-check — "hefboom-flush of spot-verkoop?"
+
+On every run the collector also takes a **derivatives snapshot** (`collector/derivatives.py`) and
+classifies the day's move (`collector/flush.py`): funding rate, open interest now vs 24h ago and
+the trailing-24h forced liquidations (long vs short) for the BTC perpetual. Sources are free and
+key-less: **OKX** public API (primary; the only one with a REST liquidation feed), **Bybit** as
+funding/OI fallback. Binance is not used (HTTP 451 from US runner IPs).
+
+Verdicts (stored in `btc.derivatives.flush_verdict`, shown in the digest and on the dashboard):
+`geen_daling` · `hefboom_flush` (OI wiped, longs liquidated, funding reset → forced sellers) ·
+`spot_verkoop` (OI intact, funding positive → real selling, leverage not washed) ·
+`shorts_stapelen` (OI up, funding negative → squeeze fuel) · `gemengd` · `onbekend`.
+Thresholds live in `config/thresholds.json → derivatives`. A verdict change on a drop day counts
+as a meaningful event (CHANGE alert). Liquidation coverage is honest: when the 24h window exceeds
+`liq_max_pages` × 100 orders the row says `liq_truncated=true` + how many hours were seen — never
+extrapolated.
+
+> ⚠️ Heuristic read of positioning, analytically calibrated, **not backtested**. It explains *who*
+> sold, not where price goes next. Never a buy/sell signal.
+
+```bash
+python -m collector.derivatives     # print one live snapshot (no DB write)
+```
+
 ## Top / sell radar
 
 A symmetric counterpart to the bottom radar (`collector/top_radar.py`, `top_indicators` in config):
